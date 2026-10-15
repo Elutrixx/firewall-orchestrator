@@ -41,7 +41,7 @@
   become: true
   become_user: postgres
 
-- name: test the encrypted additional credential migration of the 9.7.3 database upgrade
+- name: test the data changes of the 9.7.3 database upgrade
   command: psql -X -q -v ON_ERROR_STOP=1 -d "{{ fworch_db_name }}"
   args:
     stdin: >-
