@@ -4,6 +4,7 @@ using FWO.Data;
 using FWO.Data.RulePositioning;
 using FWO.Data.RulePositioning.CheckPoint;
 using FWO.Services.RulePositioning.CheckPoint;
+using FWO.Services.RulePositioning.Diagnostics;
 using NetTools;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -71,6 +72,41 @@ public class CheckPointLayerGuardSnapshotReaderTest
             Assert.That(guard.Source.Terms.Single().IncludedRanges.Single().Begin.ToString(), Is.EqualTo("10.0.0.0"));
             Assert.That(guard.Destination.Terms.Single().IncludedRanges.Single().End.ToString(), Is.EqualTo("20.0.0.255"));
         });
+    }
+
+    [Test]
+    public async Task ReadAsync_CapturesCandidatesQueryResponseAndMappedGuards()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"guard-forensics-{Guid.NewGuid():N}");
+        RulePositioningForensicCapture.ArtifactRoot = root;
+        RulePositioningForensicSession session = RulePositioningForensicCapture.Begin(1, 2, 3, kGatewayId);
+        try
+        {
+            CheckPointLayerGuardSnapshot snapshot = AssertSuccess(
+                await new CheckPointLayerGuardSnapshotReader(new RecordingApi(kValidGuardJson))
+                    .ReadAsync(Graph(), kImportId, CancellationToken.None));
+            session.Complete("COMPLETE");
+
+            List<JObject> events = File.ReadAllLines(session.EventFilePath).Select(JObject.Parse).ToList();
+            List<string?> names = events.Select(item => item.Value<string>("eventName")).ToList();
+            Assert.Multiple(() =>
+            {
+                Assert.That(snapshot.GuardsByTargetLayerId, Has.Count.EqualTo(1));
+                Assert.That(names, Does.Contain("guard-candidates"));
+                Assert.That(names, Does.Contain("guard-query-request"));
+                Assert.That(names, Does.Contain("guard-query-response"));
+                Assert.That(names, Does.Contain("guard-snapshot"));
+            });
+        }
+        finally
+        {
+            session.Dispose();
+            RulePositioningForensicCapture.ResetForTests();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
     }
 
     [Test]
@@ -346,8 +382,19 @@ public class CheckPointLayerGuardSnapshotReaderTest
             return Task.FromResult(JsonConvert.DeserializeObject<T>(json!)!);
         }
 
-        public override Task<ApiResponse<T>> SendQuerySafeAsync<T>(string query, object? variables = null,
-            string? operationName = null) => throw new NotImplementedException();
+        public override async Task<ApiResponse<T>> SendQuerySafeAsync<T>(string query, object? variables = null,
+            string? operationName = null)
+        {
+            try
+            {
+                T result = await SendQueryAsync<T>(query, variables, operationName);
+                return new ApiResponse<T>(result);
+            }
+            catch (Exception caught)
+            {
+                return new ApiResponse<T>(ApiResponseErrorOrigin.ClientException, caught.Message);
+            }
+        }
         public override GraphQlApiSubscription<T> GetSubscription<T>(Action<Exception> exceptionHandler,
             GraphQlApiSubscription<T>.SubscriptionUpdate subscriptionUpdateHandler, string subscription,
             object? variables = null, string? operationName = null) => throw new NotImplementedException();

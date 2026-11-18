@@ -31,5 +31,11 @@
 	<ProjectReference Include="..\..\..\lib\files\FWO.Compliance\FWO.Compliance.csproj" />
     <ProjectReference Include="..\..\..\lib\files\FWO.Encoders\FWO.Encoders.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Diagnostics\rule_positioning_forensics.py"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
   
 </Project>

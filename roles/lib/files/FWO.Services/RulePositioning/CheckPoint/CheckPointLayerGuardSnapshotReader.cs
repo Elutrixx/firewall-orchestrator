@@ -6,6 +6,7 @@ using FWO.Data.RulePositioning;
 using FWO.Data.RulePositioning.CheckPoint;
 using NetTools;
 using Newtonsoft.Json;
+using FWO.Services.RulePositioning.Diagnostics;
 using CheckPointLayerGuardReadResult = FWO.Data.RulePositioning.PositioningResult<
     FWO.Data.RulePositioning.CheckPoint.CheckPointLayerGuardSnapshot,
     FWO.Services.RulePositioning.CheckPoint.CheckPointLayerGuardReadFailureCategory>;
@@ -36,6 +37,14 @@ public sealed class CheckPointLayerGuardSnapshotReader(ApiConnection apiConnecti
         {
             return Failure(CheckPointLayerGuardReadFailureCategory.ScopeMismatch);
         }
+        RulePositioningForensicCapture.Record("layer-guard-snapshot", "guard-candidates", new
+        {
+            graph.ManagementId,
+            graph.GatewayId,
+            importId,
+            candidates,
+            graph.Links
+        });
         if (candidates.Count == 0)
         {
             return Success(graph, importId, kNoGuards);
@@ -43,12 +52,34 @@ public sealed class CheckPointLayerGuardSnapshotReader(ApiConnection apiConnecti
 
         List<long> sourceRuleIds = candidates.Select(candidate => candidate.SourceRuleId).Order().ToList();
         List<RuleWire>? rules;
+        object variables = new { managementId = graph.ManagementId, sourceRuleIds, importId };
+        RulePositioningForensicCapture.Record("layer-guard-snapshot", "guard-query-request", new
+        {
+            operationName = kOperation,
+            variables
+        });
         try
         {
-            rules = await apiConnection.SendQueryAsync<List<RuleWire>>(
+            ApiResponse<List<RuleWire>> response = await apiConnection.SendQuerySafeAsync<List<RuleWire>>(
                 RulePositioningQueries.getCheckPointLayerGuardsAtImport,
-                new { managementId = graph.ManagementId, sourceRuleIds, importId },
+                variables,
                 kOperation).WaitAsync(cancellationToken);
+            RulePositioningForensicCapture.Record("layer-guard-snapshot", "guard-query-response", new
+            {
+                operationName = kOperation,
+                succeeded = !response.HasErrors,
+                errorOrigin = response.ErrorOrigin,
+                errorCount = response.Errors?.Length ?? 0,
+                graphQlErrors = response.ErrorOrigin == ApiResponseErrorOrigin.GraphQlResponse
+                    ? response.Errors
+                    : null,
+                rules = response.Result
+            });
+            if (response.HasErrors)
+            {
+                return Failure(CheckPointLayerGuardReadFailureCategory.QueryFailed);
+            }
+            rules = response.Result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -63,6 +94,14 @@ public sealed class CheckPointLayerGuardSnapshotReader(ApiConnection apiConnecti
         {
             return Failure(CheckPointLayerGuardReadFailureCategory.InvalidGuardData);
         }
+        RulePositioningForensicCapture.Record("layer-guard-snapshot", "guard-snapshot", new
+        {
+            graph.ManagementId,
+            graph.GatewayId,
+            importId,
+            rules,
+            guards
+        });
         return Success(graph, importId, guards);
     }
 
@@ -377,8 +416,14 @@ public sealed class CheckPointLayerGuardSnapshotReader(ApiConnection apiConnecti
             new CheckPointLayerGuardSnapshot(graph.ManagementId, graph.GatewayId, importId, guards));
 
     /// <summary>Creates one category-only guard read failure.</summary>
-    private static CheckPointLayerGuardReadResult Failure(CheckPointLayerGuardReadFailureCategory category) =>
-        CheckPointLayerGuardReadResult.Failure(category);
+    private static CheckPointLayerGuardReadResult Failure(CheckPointLayerGuardReadFailureCategory category)
+    {
+        RulePositioningForensicCapture.Record(
+            "layer-guard-snapshot",
+            "validation-failure",
+            new { category });
+        return CheckPointLayerGuardReadResult.Failure(category);
+    }
 
     /// <summary>Identities required to query and map one inline-layer guard.</summary>
     private sealed record GuardCandidate(long SourceRuleId, long SourceRulebaseId, long TargetLayerId);

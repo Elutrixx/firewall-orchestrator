@@ -8,6 +8,7 @@ using FWO.Data.RulePositioning;
 using FWO.Data.RulePositioning.CheckPoint;
 using FWO.Data.Workflow;
 using FWO.Services.RulePositioning;
+using FWO.Services.RulePositioning.Diagnostics;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -108,6 +109,45 @@ public class RulebaseGraphSnapshotReaderTest
         });
 
         AssertExactCalls(api);
+    }
+
+    [Test]
+    public async Task ReadAsync_CapturesQueriesValidationSnapshotAndCacheDecision()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"snapshot-forensics-{Guid.NewGuid():N}");
+        RulePositioningForensicCapture.ArtifactRoot = root;
+        RulePositioningForensicSession session = RulePositioningForensicCapture.Begin(1, 2, 3, kGatewayId);
+        try
+        {
+            SimulatedApiConnection api = SuccessfulApi();
+            RulebaseGraphSnapshotReader reader = new(api);
+            using (RulePositioningGraphCacheScope.Begin())
+            {
+                _ = AssertSuccess(await reader.ReadAsync(kManagementId, kGatewayId, CancellationToken.None));
+                _ = AssertSuccess(await reader.ReadAsync(kManagementId, kGatewayId, CancellationToken.None));
+            }
+            session.Complete("COMPLETE");
+
+            List<JObject> events = File.ReadAllLines(session.EventFilePath).Select(JObject.Parse).ToList();
+            List<string?> names = events.Select(item => item.Value<string>("eventName")).ToList();
+            Assert.Multiple(() =>
+            {
+                Assert.That(names.Count(name => name == "query-request"), Is.EqualTo(3));
+                Assert.That(names.Count(name => name == "query-response"), Is.EqualTo(3));
+                Assert.That(names, Does.Contain("snapshot-created"));
+                Assert.That(names, Does.Contain("cache-miss"));
+                Assert.That(names, Does.Contain("cache-hit"));
+            });
+        }
+        finally
+        {
+            session.Dispose();
+            RulePositioningForensicCapture.ResetForTests();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
     }
 
     [Test]
@@ -541,8 +581,19 @@ public class RulebaseGraphSnapshotReaderTest
                 throw new JsonSerializationException("The simulated response was null.");
         }
 
-        public override Task<ApiResponse<T>> SendQuerySafeAsync<T>(
-            string query, object? variables = null, string? operationName = null) => throw new NotImplementedException();
+        public override async Task<ApiResponse<T>> SendQuerySafeAsync<T>(
+            string query, object? variables = null, string? operationName = null)
+        {
+            try
+            {
+                T result = await SendQueryAsync<T>(query, variables, operationName);
+                return new ApiResponse<T>(result);
+            }
+            catch (Exception exception)
+            {
+                return new ApiResponse<T>(ApiResponseErrorOrigin.ClientException, exception.Message);
+            }
+        }
 
         public override GraphQlApiSubscription<T> GetSubscription<T>(
             Action<Exception> exceptionHandler,

@@ -1,0 +1,41 @@
+{
+  "implementationTask": {"id": 42, "reqtask_id": 30, "device_id": 20, "rule_position": null},
+  "implementationElements": [{"id": 420, "implementation_task_id": 42, "field": "source", "ip": "10.0.0.10/32"}],
+  "requestTask": {"id": 30, "ticket_id": 10, "mgm_id": 50},
+  "ticket": {"id": 10, "title": "Synthetic positioning fixture"},
+  "gateway": {"id": 20, "uid": "gateway-uid", "name": "Gateway", "managementId": 50},
+  "management": {"id": 50, "uid": "management-uid", "name": "Management"},
+  "latestImportControl": {"control_id": 700, "successful_import": true},
+  "historicalRulebases": [
+    {"id": 1, "uid": "layer-selected", "name": "Selected", "mgm_id": 50, "created": 700, "removed": null},
+    {"id": 2, "uid": "section-target", "name": "[SOURCE] < [DESTINATION]", "mgm_id": 50, "created": 700, "removed": null},
+    {"id": 3, "uid": "layer-other", "name": "Other", "mgm_id": 50, "created": 700, "removed": null},
+    {"id": 4, "uid": "section-similar", "name": "[SOURCE] < [DESTINATION]", "mgm_id": 50, "created": 700, "removed": null}
+  ],
+  "historicalRulebaseLinks": [
+    {"id": 11, "gw_id": 20, "to_rulebase_id": 1, "is_initial": true, "is_section": false, "created": 700, "removed": null},
+    {"id": 12, "gw_id": 20, "from_rulebase_id": 1, "to_rulebase_id": 2, "is_initial": false, "is_section": true, "created": 700, "removed": null}
+  ],
+  "historicalRules": [],
+  "latestConfig": {
+    "managementId": 50,
+    "importId": 700,
+    "config": {
+      "rulebases": [
+        {"uid": "layer-selected", "name": "Selected", "mgm_uid": "management-uid", "is_global": false, "rules": {}},
+        {"uid": "section-target", "name": "[SOURCE] < [DESTINATION]", "mgm_uid": "management-uid", "is_global": false, "rules": {}},
+        {"uid": "layer-other", "name": "Other", "mgm_uid": "management-uid", "is_global": false, "rules": {}},
+        {"uid": "section-similar", "name": "[SOURCE] < [DESTINATION]", "mgm_uid": "management-uid", "is_global": false, "rules": {}}
+      ],
+      "gateways": [{
+        "Uid": "gateway-uid",
+        "Name": "Gateway",
+        "RulebaseLinks": [
+          {"from_rulebase_uid": null, "from_rule_uid": null, "to_rulebase_uid": "layer-selected", "link_type": "ordered", "is_initial": true, "is_global": false, "is_section": false},
+          {"from_rulebase_uid": "layer-selected", "from_rule_uid": null, "to_rulebase_uid": "section-target", "link_type": "section", "is_initial": false, "is_global": false, "is_section": true},
+          {"from_rulebase_uid": "layer-other", "from_rule_uid": null, "to_rulebase_uid": "section-similar", "link_type": "section", "is_initial": false, "is_global": false, "is_section": true}
+        ]
+      }]
+    }
+  }
+}

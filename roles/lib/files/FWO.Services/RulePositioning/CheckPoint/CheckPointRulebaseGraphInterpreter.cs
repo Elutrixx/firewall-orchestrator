@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using FWO.Data;
 using FWO.Data.RulePositioning;
+using FWO.Services.RulePositioning.Diagnostics;
 
 namespace FWO.Services.RulePositioning.CheckPoint;
 
@@ -31,14 +32,92 @@ internal sealed class CheckPointGraphStructure
         out CheckPointGraphStructure? structure)
     {
         structure = null;
+        RulePositioningForensicCapture.Record("graph-interpretation", "graph-interpreter-input", new
+        {
+            snapshot.ManagementId,
+            snapshot.GatewayId,
+            rulebases = snapshot.Rulebases.Select(RulebaseEvidence).ToList(),
+            links = snapshot.Links.Select(LinkEvidence).ToList()
+        });
         GraphInterpreter interpreter = new(snapshot);
         if (!interpreter.TryBuild(out List<CheckPointLayerStructure> layers, out CheckPointLayerStructure? initialLayer) ||
             initialLayer == null)
         {
+            RulePositioningForensicCapture.Record("graph-interpretation", "graph-interpreter-result", new
+            {
+                success = false,
+                reason = "StructuralInterpretationRejected"
+            });
             return false;
         }
         structure = new CheckPointGraphStructure(layers, initialLayer);
+        RulePositioningForensicCapture.Record("graph-interpretation", "graph-interpreter-result", new
+        {
+            success = true,
+            initialLayerId = initialLayer.Node.Id,
+            layers = layers.Select(LayerEvidence).ToList()
+        });
         return true;
+    }
+
+    private static object RulebaseEvidence(RulebaseGraphNode node) => new
+    {
+        node.Id,
+        node.Uid,
+        name = RulePositioningForensicStringProjection.Project(node.Name),
+        rules = node.Rules.Select(rule => new { rule.Id, rule.Uid, rule.NativeOrder }).ToList()
+    };
+
+    private static object LinkEvidence(RulebaseGraphLink link) => new
+    {
+        link.SourceRulebaseId,
+        link.SourceRuleId,
+        link.TargetRulebaseId,
+        link.LinkType,
+        link.IsInitial,
+        link.IsGlobal,
+        link.IsSection
+    };
+
+    private static object LayerEvidence(CheckPointLayerStructure layer) => new
+    {
+        layerId = layer.Node.Id,
+        layerUid = layer.Node.Uid,
+        layerName = RulePositioningForensicStringProjection.Project(layer.Node.Name),
+        sectionChain = layer.Sections.Select(section => new
+        {
+            sectionId = section.Node.Id,
+            sectionUid = section.Node.Uid,
+            sectionName = RulePositioningForensicStringProjection.Project(section.Node.Name),
+            rules = section.Rules.Select(rule => new { rule.Id, rule.Uid, rule.NativeOrder }).ToList(),
+            isEmpty = section.Rules.Count == 0
+        }).ToList(),
+        effectiveItems = layer.Items.Select(ItemEvidence).ToList(),
+        orderedRules = layer.OrderedRules.Select(rule => new { rule.Id, rule.Uid, rule.NativeOrder }).ToList()
+    };
+
+    private static object ItemEvidence(CheckPointLayerItemStructure item, int index)
+    {
+        return item switch
+        {
+            CheckPointRuleItemStructure directRule => new
+            {
+                index,
+                kind = "direct-rule",
+                id = directRule.Rule.Id,
+                uid = directRule.Rule.Uid,
+                nativeOrder = (double?)directRule.Rule.NativeOrder
+            },
+            CheckPointSectionStructure section => new
+            {
+                index,
+                kind = "section",
+                id = section.Node.Id,
+                uid = section.Node.Uid,
+                nativeOrder = section.Rules.Count == 0 ? (double?)null : section.Rules[0].NativeOrder
+            },
+            _ => new { index, kind = "unknown", id = 0L, uid = "", nativeOrder = (double?)null }
+        };
     }
 
     /// <summary>Builds the interpreted graph while enforcing structural invariants.</summary>
@@ -70,14 +149,17 @@ internal sealed class CheckPointGraphStructure
             initialLayer = null;
             if (!hasValidInlineLinks || !HasUnambiguousSuccessors(snapshot.Links))
             {
+                Reject(!hasValidInlineLinks ? "InvalidInlineLinkLookup" : "AmbiguousStructuralSuccessor");
                 return false;
             }
             if (!TryResolveInitialLayerId(out long initialLayerId))
             {
+                Reject("InitialLayerCouldNotBeResolved");
                 return false;
             }
             if (!TryAddLayer(initialLayerId, out initialLayer))
             {
+                Reject("InitialLayerCouldNotBeBuilt", new { initialLayerId });
                 return false;
             }
             return TryAddOrderedLayers(initialLayerId);
@@ -91,6 +173,11 @@ internal sealed class CheckPointGraphStructure
             if (initialLinks.Count != 1 || initialLinks[0].IsSection ||
                 initialLinks[0].LinkType == RulebaseLinkTypes.Inline)
             {
+                Reject("InvalidInitialLink", new
+                {
+                    count = initialLinks.Count,
+                    links = initialLinks.Select(LinkEvidence).ToList()
+                });
                 return false;
             }
 
@@ -102,6 +189,7 @@ internal sealed class CheckPointGraphStructure
             RulebaseGraphLink? policySuccessor = GetUniqueOrderedSuccessor(initialLayerId);
             if (policySuccessor == null)
             {
+                Reject("PolicyInitialLinkMissingOrderedSuccessor", LinkEvidence(initialLinks[0]));
                 return false;
             }
             initialLayerId = policySuccessor.TargetRulebaseId;
@@ -123,6 +211,7 @@ internal sealed class CheckPointGraphStructure
                 currentLayerId = successor.TargetRulebaseId;
                 if (!orderedLayerIds.Add(currentLayerId) || !TryAddLayer(currentLayerId, out _))
                 {
+                    Reject("OrderedLayerCycleOrBuildFailure", new { currentLayerId });
                     return false;
                 }
             }
@@ -142,6 +231,7 @@ internal sealed class CheckPointGraphStructure
                 if (pending.Depth > rulebasesById.Count ||
                     !TryCreateLayer(pending.RulebaseId, out CheckPointLayerStructure? currentLayer))
                 {
+                    Reject("InlineLayerDepthOrBuildFailure", pending);
                     return false;
                 }
 
@@ -166,6 +256,7 @@ internal sealed class CheckPointGraphStructure
                 !rulebasesById.TryGetValue(rulebaseId, out RulebaseGraphNode? node) ||
                 !TryBuildSections(rulebaseId, out List<CheckPointSectionStructure> sections))
             {
+                Reject("DuplicateMissingOrInvalidLayer", new { rulebaseId });
                 return false;
             }
 
@@ -195,6 +286,7 @@ internal sealed class CheckPointGraphStructure
                 if (!sectionIds.Add(currentRulebaseId) || !interpretedRulebaseIds.Add(currentRulebaseId) ||
                     !rulebasesById.TryGetValue(currentRulebaseId, out RulebaseGraphNode? sectionNode))
                 {
+                    Reject("SectionCycleDuplicateOrMissingNode", new { layerRulebaseId, currentRulebaseId });
                     return false;
                 }
                 sections.Add(new CheckPointSectionStructure(sectionNode));
@@ -281,6 +373,15 @@ internal sealed class CheckPointGraphStructure
         /// <summary>Checks for an inline link without its source rule identity.</summary>
         private static bool HasInlineLinkWithoutRule(List<RulebaseGraphLink> links) =>
             links.Any(link => link.LinkType == RulebaseLinkTypes.Inline && !link.SourceRuleId.HasValue);
+
+        private static void Reject(string reason, object? data = null)
+        {
+            RulePositioningForensicCapture.Record("graph-interpretation", "graph-interpreter-rejection", new
+            {
+                reason,
+                data
+            });
+        }
     }
 }
 

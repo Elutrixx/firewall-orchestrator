@@ -4,6 +4,8 @@ using FWO.Data.RulePositioning;
 using NetTools;
 using NUnit.Framework;
 using System.Net;
+using FWO.Services.RulePositioning.Diagnostics;
+using Newtonsoft.Json.Linq;
 using CreationRuleZoneResolutionResult = FWO.Data.RulePositioning.PositioningResult<
     FWO.Compliance.RulePositioning.CreationRuleZoneInput,
     FWO.Compliance.RulePositioning.CreationRuleZoneResolutionFailureCategory>;
@@ -11,6 +13,7 @@ using CreationRuleZoneResolutionResult = FWO.Data.RulePositioning.PositioningRes
 namespace FWO.Test;
 
 [TestFixture]
+[NonParallelizable]
 internal class CreationRuleZoneResolverTest
 {
     private const int kCriterionId = 7;
@@ -39,6 +42,47 @@ internal class CreationRuleZoneResolverTest
             Assert.That(input.SourceCoverage, Is.EqualTo(ZoneCoverage.Complete));
             Assert.That(input.DestinationCoverage, Is.EqualTo(ZoneCoverage.Complete));
         });
+    }
+
+    [Test]
+    public async Task ResolveAsync_CapturesCandidateZonesCoverageAndAssignments()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"zone-input-forensics-{Guid.NewGuid():N}");
+        RulePositioningForensicCapture.ArtifactRoot = root;
+        RulePositioningForensicSession session = RulePositioningForensicCapture.Begin(1, 2, 3, 4);
+        try
+        {
+            CreationRuleZoneInput input = Success(await Resolver().ResolveAsync(
+                Input([Range("10.0.0.20")], [Range("192.0.2.10")]),
+                [
+                    Zone(10, "Source", "10.0.0.0", "10.0.0.255"),
+                    Zone(20, "Destination", "192.0.2.0", "192.0.2.255")
+                ],
+                Config(autoCalculateInternetZone: false),
+                CancellationToken.None));
+            session.Complete("COMPLETE");
+
+            List<string?> names = File.ReadAllLines(session.EventFilePath)
+                .Select(JObject.Parse)
+                .Select(item => item.Value<string>("eventName"))
+                .ToList();
+            Assert.Multiple(() =>
+            {
+                Assert.That(input.SourceCoverage, Is.EqualTo(ZoneCoverage.Complete));
+                Assert.That(names, Does.Contain("zone-input"));
+                Assert.That(names, Does.Contain("zone-side-resolution"));
+                Assert.That(names, Does.Contain("zone-resolved"));
+            });
+        }
+        finally
+        {
+            session.Dispose();
+            RulePositioningForensicCapture.ResetForTests();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
     }
 
     [Test]

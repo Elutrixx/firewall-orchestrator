@@ -8,6 +8,7 @@ using FWO.Data.Workflow;
 using FWO.Services.RulePositioning.Blocks;
 using FWO.Services.RulePositioning.CheckPoint;
 using NetTools;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using CheckPointLayerGuardZonePairRecipeResult = FWO.Data.RulePositioning.PositioningResult<
     FWO.Services.RulePositioning.Blocks.PositioningRecipe<FWO.Data.RulePositioning.CheckPoint.CheckPointPositioningContext,
@@ -17,6 +18,7 @@ using CheckPointLayerGuardZonePairRecipeResult = FWO.Data.RulePositioning.Positi
 namespace FWO.Test;
 
 [TestFixture]
+[NonParallelizable]
 public class CheckPointLayerGuardZonePairRecipeTest
 {
     private const int kManagementId = 10;
@@ -66,6 +68,38 @@ public class CheckPointLayerGuardZonePairRecipeTest
 
         Assert.That(failure.Category, Is.EqualTo(PositioningBlockFailureCategory.ScopeNotFound));
         Assert.That(failure.OriginatingBlockKind, Is.EqualTo(CheckPointSectionScopeBlock.kKind));
+    }
+
+    [Test]
+    public async Task CompleteRecipe_CapturesInterpreterGuardSectionAndRecipeEvidence()
+    {
+        using ForensicCaptureTestScope capture = new();
+        RulebaseGraphSnapshot graph = Graph("[SOURCE]->[DESTINATION]");
+        CheckPointLayerGuardZonePairPositioningInput input = Input(
+            graph, Guard(10, 1, 2, "10.0.0.0/24", "20.0.0.0/24"));
+        PositioningRecipe<CheckPointPositioningContext, CheckPointBlockValue> recipe = Success(
+            CheckPointLayerGuardZonePairRecipeFactory.Create(input, "[SOURCE] -> [DESTINATION]"));
+
+        await new PositioningRecipeExecutor<CheckPointPositioningContext, CheckPointBlockValue>()
+            .ExecuteAsync(recipe, Context(graph, input));
+        List<JObject> events = capture.CompleteAndRead();
+
+        string[] eventNames = events.Select(item => item.Value<string>("eventName")!).ToArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(eventNames, Does.Contain("graph-interpreter-result"));
+            Assert.That(eventNames, Does.Contain("guard-candidate-evaluation"));
+            Assert.That(eventNames, Does.Contain("section-candidate-comparison"));
+            Assert.That(eventNames, Does.Contain("block-entry"));
+            Assert.That(eventNames, Does.Contain("block-result"));
+        });
+        JObject comparison = events.Single(item =>
+            item.Value<string>("eventName") == "section-candidate-comparison" &&
+            item["payload"]?.Value<string>("candidateUid") == "section");
+        Assert.That(comparison["payload"]?["comparison"]?.Value<bool>("ordinalEqual"), Is.False);
+        Assert.That(
+            comparison["payload"]?["comparison"]?.Value<int>("firstDifferingUtf16Index"),
+            Is.EqualTo(8));
     }
 
     [TestCase(null)]

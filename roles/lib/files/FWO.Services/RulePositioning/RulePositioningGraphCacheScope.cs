@@ -1,4 +1,5 @@
 using FWO.Data.RulePositioning;
+using FWO.Services.RulePositioning.Diagnostics;
 using RulebaseGraphReadResult = FWO.Data.RulePositioning.PositioningResult<
     FWO.Services.RulePositioning.RulebaseGraphReadValue,
     FWO.Services.RulePositioning.RulebaseGraphReadFailureCategory>;
@@ -37,6 +38,11 @@ internal static class RulePositioningGraphCacheScope
         CacheState? state = kCurrent.Value;
         if (state == null)
         {
+            RulePositioningForensicCapture.Record("snapshot-cache", "cache-outside-scope", new
+            {
+                managementId,
+                gatewayId
+            });
             return await read();
         }
 
@@ -46,8 +52,21 @@ internal static class RulePositioningGraphCacheScope
         {
             if (!state.Reads.TryGetValue(key, out pendingRead!))
             {
+                RulePositioningForensicCapture.Record("snapshot-cache", "cache-miss", new
+                {
+                    managementId,
+                    gatewayId
+                });
                 pendingRead = read();
                 state.Reads[key] = pendingRead;
+            }
+            else
+            {
+                RulePositioningForensicCapture.Record("snapshot-cache", "cache-hit", new
+                {
+                    managementId,
+                    gatewayId
+                });
             }
         }
 

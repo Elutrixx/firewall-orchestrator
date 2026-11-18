@@ -5,6 +5,7 @@ using FWO.Data.RulePositioning.CheckPoint;
 using FWO.Services.RulePositioning;
 using FWO.Services.RulePositioning.Blocks;
 using FWO.Services.RulePositioning.CheckPoint;
+using FWO.Services.RulePositioning.Diagnostics;
 using CheckPointLayerGuardReadResult = FWO.Data.RulePositioning.PositioningResult<
     FWO.Data.RulePositioning.CheckPoint.CheckPointLayerGuardSnapshot,
     FWO.Services.RulePositioning.CheckPoint.CheckPointLayerGuardReadFailureCategory>;
@@ -72,7 +73,18 @@ public sealed class CheckPointRulePositioningStrategy : IRulePositioningStrategy
     {
         try
         {
-            return await CalculateCoreAsync(context, cancellationToken);
+            object? entry = context == null ? null : new
+            {
+                context.ImplementationTask,
+                parentRequestTask = RulePositioningForensicProjection.RequestTask(context.ParentRequestTask),
+                targetGateway = RulePositioningForensicProjection.Device(context.TargetGateway),
+                targetManagement = RulePositioningForensicProjection.Management(context.TargetManagement),
+                context.EffectiveSettings,
+                ticketRequestTasks = RulePositioningForensicProjection.RequestTasks(context.TicketRequestTasks),
+                context.Configuration
+            };
+            RulePositioningForensicCapture.Record("strategy", "strategy-entry", entry);
+            return await CalculateCoreAsync(context!, cancellationToken);
         }
         catch (OperationCanceledException exception)
             when (cancellationToken.IsCancellationRequested
@@ -80,8 +92,12 @@ public sealed class CheckPointRulePositioningStrategy : IRulePositioningStrategy
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
+            RulePositioningForensicCapture.Record("strategy", "strategy-exception", new
+            {
+                exceptionType = exception.GetType().FullName
+            });
             return Failure(RulePositioningFailureCategory.CalculationFailed);
         }
     }
@@ -107,6 +123,11 @@ public sealed class CheckPointRulePositioningStrategy : IRulePositioningStrategy
 
         PositioningResult<CheckPointSectionNameTemplate, CheckPointSectionNameTemplateFailureCategory> templateResult =
             CheckPointSectionNameTemplate.Parse(context.EffectiveSettings.CheckPointLayerGuardSectionNameTemplate);
+        RulePositioningForensicCapture.Record("strategy", "template-result", new
+        {
+            template = context.EffectiveSettings.CheckPointLayerGuardSectionNameTemplate,
+            result = templateResult
+        });
         if (!templateResult.TryGetValue(out CheckPointSectionNameTemplate? sectionNameTemplate))
         {
             templateResult.TryGetFailure(out CheckPointSectionNameTemplateFailureCategory templateFailure);
@@ -126,9 +147,16 @@ public sealed class CheckPointRulePositioningStrategy : IRulePositioningStrategy
             return preparation.PreparationFailure;
         }
         PreparedInputs inputs = preparation.Inputs!;
+        RulePositioningForensicCapture.Record("strategy", "prepared-inputs", inputs);
 
         PositioningResult<string, CheckPointLayerGuardSectionNameFailureCategory> sectionNameResult =
             CheckPointLayerGuardSectionNameResolver.Resolve(sectionNameTemplate, inputs.ZoneInput);
+        RulePositioningForensicCapture.Record("strategy", "section-name", new
+        {
+            template = sectionNameTemplate,
+            inputs.ZoneInput,
+            result = sectionNameResult
+        });
         if (!sectionNameResult.TryGetValue(out string? normalizedSectionName))
         {
             sectionNameResult.TryGetFailure(out CheckPointLayerGuardSectionNameFailureCategory sectionNameFailure);
@@ -146,6 +174,13 @@ public sealed class CheckPointRulePositioningStrategy : IRulePositioningStrategy
             algorithm,
             positioningInput,
             normalizedSectionName);
+        RulePositioningForensicCapture.Record("strategy", "recipe-selection", new
+        {
+            algorithm,
+            normalizedSectionName,
+            positioningInput,
+            result = selectionResult
+        });
         if (!selectionResult.TryGetValue(out PositioningRecipe<CheckPointPositioningContext, CheckPointBlockValue>? recipe))
         {
             return MapSelectionFailure(selectionResult);
@@ -160,6 +195,12 @@ public sealed class CheckPointRulePositioningStrategy : IRulePositioningStrategy
             recipe,
             checkPointContext,
             cancellationToken);
+        RulePositioningForensicCapture.Record("strategy", "recipe-result", new
+        {
+            algorithm,
+            normalizedSectionName,
+            executionResult
+        });
         if (executionResult is not PositioningBlockSuccess<CheckPointBlockValue> executionSuccess)
         {
             return MapExecutionFailure(executionResult);

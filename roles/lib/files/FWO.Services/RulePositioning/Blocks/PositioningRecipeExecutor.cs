@@ -1,3 +1,5 @@
+using FWO.Services.RulePositioning.Diagnostics;
+
 namespace FWO.Services.RulePositioning.Blocks;
 
 /// <summary>
@@ -15,12 +17,20 @@ public sealed class PositioningRecipeExecutor<TContext, TOutput>
     {
         if (recipe == null)
         {
+            RulePositioningForensicCapture.Record("recipe-execution", "recipe-rejection", new
+            {
+                reason = "NullRecipe"
+            });
             return Task.FromResult<PositioningBlockResult<TOutput>>(
                 new PositioningBlockFailure<TOutput>(
                     PositioningBlockFailureCategory.InvalidRecipe,
                     "recipe"));
         }
-        return EvaluateNodeAsync(recipe.PlanRoot, context, cancellationToken);
+        RulePositioningForensicCapture.Record("recipe-execution", "recipe-start", new
+        {
+            rootKind = recipe.PlanRoot.Kind
+        });
+        return EvaluateNodeAsync(recipe.PlanRoot, context, "root", cancellationToken);
     }
 
     /// <summary>
@@ -29,16 +39,27 @@ public sealed class PositioningRecipeExecutor<TContext, TOutput>
     private static async Task<PositioningBlockResult<TOutput>> EvaluateNodeAsync(
         PositioningRecipeNode<TContext, TOutput> node,
         TContext context,
+        string path,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        List<TOutput> childValues = new(node.Children.Count);
-        foreach (PositioningRecipeNode<TContext, TOutput> child in node.Children)
+        RulePositioningForensicCapture.Record("recipe-execution", "block-entry", new
         {
+            path,
+            node.Kind,
+            childKinds = node.Children.Select(child => child.Kind).ToList(),
+            childCount = node.Children.Count
+        });
+        List<TOutput> childValues = new(node.Children.Count);
+        for (int childIndex = 0; childIndex < node.Children.Count; childIndex++)
+        {
+            PositioningRecipeNode<TContext, TOutput> child = node.Children[childIndex];
             PositioningBlockResult<TOutput> childResult =
-                await EvaluateNodeAsync(child, context, cancellationToken).ConfigureAwait(false);
-            if (childResult is PositioningBlockFailure<TOutput>)
+                await EvaluateNodeAsync(child, context, $"{path}/{childIndex}:{child.Kind}", cancellationToken)
+                    .ConfigureAwait(false);
+            if (childResult is PositioningBlockFailure<TOutput> childFailure)
             {
+                RecordResult(path, node.Kind, childFailure, "ChildFailurePropagated");
                 return childResult;
             }
             childValues.Add(((PositioningBlockSuccess<TOutput>)childResult).Value);
@@ -50,16 +71,56 @@ public sealed class PositioningRecipeExecutor<TContext, TOutput>
             PositioningBlockResult<TOutput>? result = await node.Block
                 .EvaluateAsync(context, childValues.AsReadOnly(), cancellationToken)
                 .ConfigureAwait(false);
-            return result ?? UnexpectedFailure(node.Kind);
+            PositioningBlockResult<TOutput> finalResult = result ?? UnexpectedFailure(node.Kind);
+            RecordResult(path, node.Kind, finalResult, result == null ? "NullResult" : "Evaluated");
+            return finalResult;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch
+        catch (Exception exception)
         {
-            return UnexpectedFailure(node.Kind);
+            PositioningBlockFailure<TOutput> failure = UnexpectedFailure(node.Kind);
+            RulePositioningForensicCapture.Record("recipe-execution", "block-exception", new
+            {
+                path,
+                node.Kind,
+                exceptionType = exception.GetType().FullName
+            });
+            RecordResult(path, node.Kind, failure, "UnexpectedException");
+            return failure;
         }
+    }
+
+    private static void RecordResult(
+        string path,
+        string blockKind,
+        PositioningBlockResult<TOutput> result,
+        string reason)
+    {
+        object payload = result switch
+        {
+            PositioningBlockFailure<TOutput> failure => (object)new
+            {
+                path,
+                blockKind,
+                result = "Failure",
+                reason,
+                category = failure.Category.ToString(),
+                failure.OriginatingBlockKind
+            },
+            _ => (object)new
+            {
+                path,
+                blockKind,
+                result = "Success",
+                reason,
+                category = (string?)null,
+                OriginatingBlockKind = (string?)null
+            }
+        };
+        RulePositioningForensicCapture.Record("recipe-execution", "block-result", payload);
     }
 
     /// <summary>

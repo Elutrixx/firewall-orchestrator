@@ -157,7 +157,9 @@ namespace FWO.Api.Client
                         Log.WriteError(LogCategory, $"Error while sending query to GraphQL API. Caught by GraphQL client library. \nMessage: {error.Message}");
                         return error.Message;
                     }).ToList();
-                    return new ApiResponse<QueryResponseType>(errorMessages.ToArray());
+                    return new ApiResponse<QueryResponseType>(
+                        ApiResponseErrorOrigin.GraphQlResponse,
+                        errorMessages.ToArray());
                 }
 
                 if (ApiConstants.UseSystemTextJsonSerializer)
@@ -175,7 +177,9 @@ namespace FWO.Api.Client
             catch (Exception exception)
             {
                 Log.WriteError(LogCategory, $"Error while sending query to GraphQL API. Query: {query}, variables: {(variables != null ? "<redacted>" : "")}", exception);
-                return new ApiResponse<QueryResponseType>(exception.Message);
+                return new ApiResponse<QueryResponseType>(
+                    ApiResponseErrorOrigin.ClientException,
+                    exception.Message);
             }
         }
 

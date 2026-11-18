@@ -2,6 +2,7 @@ using FWO.Data.DeviceSpecificSettings;
 using FWO.Data.RulePositioning;
 using System.Collections.ObjectModel;
 using System.Text;
+using FWO.Services.RulePositioning.Diagnostics;
 
 namespace FWO.Services.RulePositioning.CheckPoint;
 
@@ -45,6 +46,7 @@ public sealed class CheckPointSectionNameTemplate
     {
         if (string.IsNullOrWhiteSpace(template))
         {
+            RecordParseFailure(template, "EmptyOrWhitespace");
             return ParseFailure();
         }
 
@@ -69,6 +71,7 @@ public sealed class CheckPointSectionNameTemplate
             if (closingMarker < 0 ||
                 !TryVariable(template[nameStart..closingMarker], out CheckPointSectionNameVariable variable))
             {
+                RecordParseFailure(template, "MalformedOrUnknownPlaceholder");
                 return ParseFailure();
             }
 
@@ -77,8 +80,20 @@ public sealed class CheckPointSectionNameTemplate
             cursor = closingMarker + kDelimiter.Length;
         }
 
-        return PositioningResult<CheckPointSectionNameTemplate, CheckPointSectionNameTemplateFailureCategory>.Success(
-            new CheckPointSectionNameTemplate(parts, variables));
+        CheckPointSectionNameTemplate parsed = new(parts, variables);
+        RulePositioningForensicCapture.Record("section-template", "template-parsed", new
+        {
+            template = RulePositioningForensicStringProjection.Project(template),
+            parts = parts.Select((part, index) => new
+            {
+                index,
+                kind = part.Variable.HasValue ? "variable" : "fixed",
+                text = RulePositioningForensicStringProjection.Project(part.Text),
+                variable = part.Variable?.ToString()
+            }).ToList(),
+            requiredVariables = variables.Select(variable => variable.ToString()).Order().ToList()
+        });
+        return PositioningResult<CheckPointSectionNameTemplate, CheckPointSectionNameTemplateFailureCategory>.Success(parsed);
     }
 
     /// <summary>Renders parsed parts exactly once and invariant-normalizes the complete selector name.</summary>
@@ -96,21 +111,56 @@ public sealed class CheckPointSectionNameTemplate
             }
             if (!values.TryGetValue(part.Variable.Value, out string? value))
             {
+                RecordRenderFailure(values, CheckPointSectionNameTemplateFailureCategory.MissingValue);
                 return RenderFailure(CheckPointSectionNameTemplateFailureCategory.MissingValue);
             }
 
             string normalizedValue = value?.Trim() ?? string.Empty;
             if (normalizedValue.Length == 0)
             {
+                RecordRenderFailure(values, CheckPointSectionNameTemplateFailureCategory.InvalidValue);
                 return RenderFailure(CheckPointSectionNameTemplateFailureCategory.InvalidValue);
             }
             rendered.Append(normalizedValue);
         }
 
         string normalized = rendered.ToString().Trim().ToUpperInvariant();
-        return normalized.Length == 0
-            ? RenderFailure(CheckPointSectionNameTemplateFailureCategory.InvalidRenderedName)
-            : PositioningResult<string, CheckPointSectionNameTemplateFailureCategory>.Success(normalized);
+        if (normalized.Length == 0)
+        {
+            RecordRenderFailure(values, CheckPointSectionNameTemplateFailureCategory.InvalidRenderedName);
+            return RenderFailure(CheckPointSectionNameTemplateFailureCategory.InvalidRenderedName);
+        }
+        RulePositioningForensicCapture.Record("section-template", "template-rendered", new
+        {
+            values = values.ToDictionary(
+                item => item.Key.ToString(),
+                item => RulePositioningForensicStringProjection.Project(item.Value)),
+            beforeFinalNormalization = RulePositioningForensicStringProjection.Project(rendered.ToString()),
+            result = RulePositioningForensicStringProjection.Project(normalized)
+        });
+        return PositioningResult<string, CheckPointSectionNameTemplateFailureCategory>.Success(normalized);
+    }
+
+    private static void RecordParseFailure(string? template, string reason)
+    {
+        RulePositioningForensicCapture.Record("section-template", "template-parse-failure", new
+        {
+            template = RulePositioningForensicStringProjection.Project(template),
+            reason
+        });
+    }
+
+    private static void RecordRenderFailure(
+        IReadOnlyDictionary<CheckPointSectionNameVariable, string> values,
+        CheckPointSectionNameTemplateFailureCategory category)
+    {
+        RulePositioningForensicCapture.Record("section-template", "template-render-failure", new
+        {
+            category = category.ToString(),
+            values = values.ToDictionary(
+                item => item.Key.ToString(),
+                item => RulePositioningForensicStringProjection.Project(item.Value))
+        });
     }
 
     private static bool TryVariable(string name, out CheckPointSectionNameVariable variable)

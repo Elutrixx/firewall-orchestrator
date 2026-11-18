@@ -4,6 +4,7 @@ using FWO.Data.DeviceSpecificSettings;
 using FWO.Data.RulePositioning;
 using FWO.Data.RulePositioning.CheckPoint;
 using FWO.Services.RulePositioning.Blocks;
+using FWO.Services.RulePositioning.Diagnostics;
 
 namespace FWO.Services.RulePositioning.CheckPoint;
 
@@ -222,6 +223,13 @@ public sealed class CheckPointLayerGuardScopeBlock : IPositioningBlock<CheckPoin
         }
 
         GuardMatchSummary matches = EvaluateCandidates(positioningInput, candidates, cancellationToken);
+        RulePositioningForensicCapture.Record("layer-guard-selection", "guard-selection-summary", new
+        {
+            matches.DefiniteMatches,
+            matches.IndeterminateCandidates,
+            selectedLayerId = matches.SelectedLayer?.Node.Id,
+            selectedLayerUid = matches.SelectedLayer?.Node.Uid
+        });
         return ResolveMatches(matches);
     }
 
@@ -241,6 +249,27 @@ public sealed class CheckPointLayerGuardScopeBlock : IPositioningBlock<CheckPoin
                 candidate.Guard.Source, positioningInput.NetworkInput.SourceRanges, cancellationToken);
             CheckPointGuardContainmentResult destination = CheckPointGuardContainmentEvaluator.Evaluate(
                 candidate.Guard.Destination, positioningInput.NetworkInput.DestinationRanges, cancellationToken);
+            RulePositioningForensicCapture.Record("layer-guard-selection", "guard-candidate-evaluation", new
+            {
+                layer = new
+                {
+                    candidate.Layer.Node.Id,
+                    candidate.Layer.Node.Uid,
+                    name = RulePositioningForensicStringProjection.Project(candidate.Layer.Node.Name)
+                },
+                guard = GuardEvidence(candidate.Guard),
+                requestedSourceRanges = positioningInput.NetworkInput.SourceRanges.Select(RangeEvidence).ToList(),
+                requestedDestinationRanges = positioningInput.NetworkInput.DestinationRanges.Select(RangeEvidence).ToList(),
+                sourceContainment = source.ToString(),
+                destinationContainment = destination.ToString(),
+                classification = source == CheckPointGuardContainmentResult.Contained &&
+                    destination == CheckPointGuardContainmentResult.Contained
+                        ? "DefiniteMatch"
+                        : source != CheckPointGuardContainmentResult.NotContained &&
+                            destination != CheckPointGuardContainmentResult.NotContained
+                            ? "Indeterminate"
+                            : "NotMatched"
+            });
             if (source == CheckPointGuardContainmentResult.Contained && destination == CheckPointGuardContainmentResult.Contained)
             {
                 definiteMatches++;
@@ -285,24 +314,69 @@ public sealed class CheckPointLayerGuardScopeBlock : IPositioningBlock<CheckPoin
         CheckPointLayerGuardSnapshot guards = positioningInput.GuardSnapshot;
         if (!HasMatchingSnapshotIdentity(guards, context.Snapshot))
         {
+            RulePositioningForensicCapture.Record("layer-guard-selection", "guard-snapshot-rejection", new
+            {
+                reason = "SnapshotIdentityMismatch",
+                graph = new { context.Snapshot.ManagementId, context.Snapshot.GatewayId },
+                guard = new { guards.ManagementId, guards.GatewayId, guards.ImportId }
+            });
             return false;
         }
         List<RulebaseGraphLink> inlineLinks = [.. context.Snapshot.Links.Where(link =>
             link.LinkType == RulebaseLinkTypes.Inline)];
         if (!HasOneToOneGuardLinks(inlineLinks, guards))
         {
+            RulePositioningForensicCapture.Record("layer-guard-selection", "guard-snapshot-rejection", new
+            {
+                reason = "InlineLinkGuardCardinalityMismatch",
+                inlineLinks,
+                guards = guards.GuardsByTargetLayerId.Values.Select(GuardEvidence).ToList()
+            });
             return false;
         }
         foreach (RulebaseGraphLink link in inlineLinks)
         {
             if (!TryCreateGuardCandidate(link, structure, guards, out GuardCandidate? candidate))
             {
+                RulePositioningForensicCapture.Record("layer-guard-selection", "guard-snapshot-rejection", new
+                {
+                    reason = "GuardCandidateMappingFailed",
+                    link
+                });
                 return false;
             }
             candidates.Add(candidate!);
         }
         return true;
     }
+
+    private static object GuardEvidence(CheckPointLayerGuard guard) => new
+    {
+        guard.SourceRuleId,
+        guard.SourceRulebaseId,
+        guard.TargetLayerId,
+        source = SideEvidence(guard.Source),
+        destination = SideEvidence(guard.Destination)
+    };
+
+    private static object SideEvidence(CheckPointGuardSide side) => new
+    {
+        side.IsNegated,
+        terms = side.Terms.Select(term => new
+        {
+            includedRanges = term.IncludedRanges.Select(RangeEvidence).ToList(),
+            excludedRanges = term.ExcludedRanges.Select(RangeEvidence).ToList(),
+            term.HasUnresolvedIncludedTerms,
+            term.HasUnresolvedExcludedTerms
+        }).ToList()
+    };
+
+    private static object RangeEvidence(NetTools.IPAddressRange range) => new
+    {
+        begin = range.Begin.ToString(),
+        end = range.End.ToString(),
+        addressFamily = range.Begin.AddressFamily.ToString()
+    };
 
     /// <summary>Checks that guard and graph snapshots describe the same management and gateway.</summary>
     private static bool HasMatchingSnapshotIdentity(
@@ -480,7 +554,7 @@ public sealed class CheckPointSectionScopeBlock : IPositioningBlock<CheckPointPo
     {
         cancellationToken.ThrowIfCancellationRequested();
         PositioningBlockFailure<CheckPointBlockValue>? contextFailure =
-            CheckPointBlockValidation.ValidateContext(context, Kind, out _);
+            CheckPointBlockValidation.ValidateContext(context, Kind, out CheckPointGraphStructure? structure);
         if (contextFailure != null)
         {
             return Task.FromResult<PositioningBlockResult<CheckPointBlockValue>>(contextFailure);
@@ -496,7 +570,41 @@ public sealed class CheckPointSectionScopeBlock : IPositioningBlock<CheckPointPo
             return Task.FromResult<PositioningBlockResult<CheckPointBlockValue>>(
                 CheckPointBlockValidation.Failure(PositioningBlockFailureCategory.InvalidSnapshot, Kind));
         }
+        foreach (CheckPointLayerStructure layer in structure!.Layers)
+        {
+            foreach (CheckPointSectionStructure candidate in layer.Sections)
+            {
+                string? actual = ComparedCandidateValue(candidate);
+                RulePositioningForensicCapture.Record("section-selection", "section-candidate-comparison", new
+                {
+                    selectorMode = Selector.Mode.ToString(),
+                    selectorValue = RulePositioningForensicStringProjection.Project(Selector.Value),
+                    parentLayerId = parent.LayerStructure.Node.Id,
+                    candidateLayerId = layer.Node.Id,
+                    candidateLayerUid = layer.Node.Uid,
+                    isInSelectedLayer = ReferenceEquals(layer, parent.LayerStructure),
+                    candidateId = candidate.Node.Id,
+                    candidateUid = candidate.Node.Uid,
+                    importedName = RulePositioningForensicStringProjection.Project(candidate.Node.Name),
+                    comparedActualValue = RulePositioningForensicStringProjection.Project(actual),
+                    comparison = RulePositioningForensicStringProjection.Compare(Selector.Value, actual)
+                });
+            }
+        }
         List<CheckPointSectionStructure> matches = parent.LayerStructure.Sections.Where(Matches).ToList();
+        RulePositioningForensicCapture.Record("section-selection", "section-selection-result", new
+        {
+            selectorMode = Selector.Mode.ToString(),
+            selectorValue = RulePositioningForensicStringProjection.Project(Selector.Value),
+            parentLayerId = parent.LayerStructure.Node.Id,
+            matchCount = matches.Count,
+            matches = matches.Select(section => new
+            {
+                section.Node.Id,
+                section.Node.Uid,
+                name = RulePositioningForensicStringProjection.Project(section.Node.Name)
+            }).ToList()
+        });
         return Task.FromResult<PositioningBlockResult<CheckPointBlockValue>>(matches.Count switch
         {
             0 => CheckPointBlockValidation.Failure(PositioningBlockFailureCategory.ScopeNotFound, Kind),
@@ -520,6 +628,17 @@ public sealed class CheckPointSectionScopeBlock : IPositioningBlock<CheckPointPo
             CheckPointSectionSelectionMode.NormalizedName =>
                 string.Equals(section.Node.Name.Trim().ToUpperInvariant(), Selector.Value, StringComparison.Ordinal),
             _ => false
+        };
+    }
+
+    private string? ComparedCandidateValue(CheckPointSectionStructure section)
+    {
+        return Selector.Mode switch
+        {
+            CheckPointSectionSelectionMode.ExactName => section.Node.Name,
+            CheckPointSectionSelectionMode.Uid => section.Node.Uid,
+            CheckPointSectionSelectionMode.NormalizedName => section.Node.Name.Trim().ToUpperInvariant(),
+            _ => null
         };
     }
 }

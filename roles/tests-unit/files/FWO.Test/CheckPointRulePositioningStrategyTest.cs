@@ -9,11 +9,13 @@ using FWO.Middleware.Server;
 using FWO.Services.RulePositioning;
 using FWO.Services.RulePositioning.Blocks;
 using FWO.Services.RulePositioning.CheckPoint;
+using FWO.Services.RulePositioning.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
 using System.Collections.Concurrent;
 using System.Net;
 using NetTools;
+using Newtonsoft.Json.Linq;
 using CheckPointLayerGuardReadResult = FWO.Data.RulePositioning.PositioningResult<
     FWO.Data.RulePositioning.CheckPoint.CheckPointLayerGuardSnapshot,
     FWO.Services.RulePositioning.CheckPoint.CheckPointLayerGuardReadFailureCategory>;
@@ -37,6 +39,7 @@ using CheckPointRecipeSelectionResult = FWO.Data.RulePositioning.PositioningResu
 namespace FWO.Test;
 
 [TestFixture]
+[NonParallelizable]
 internal class CheckPointRulePositioningStrategyTest
 {
     private const int kManagementId = 21;
@@ -231,6 +234,49 @@ internal class CheckPointRulePositioningStrategyTest
             Assert.That(fixture.Catalog.SelectCallCount, Is.EqualTo(1));
             Assert.That(fixture.Catalog.NormalizedSectionName, Is.EqualTo("BIRTHDAY SECTION"));
         });
+    }
+
+    [Test]
+    public async Task CalculateAsync_CapturesPreparationSelectionAndExecutionHandoffs()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"strategy-forensics-{Guid.NewGuid():N}");
+        RulePositioningForensicCapture.ArtifactRoot = root;
+        RulePositioningForensicSession session = RulePositioningForensicCapture.Begin(1, 2, 3, kGatewayId);
+        try
+        {
+            StrategyFixture fixture = new();
+            RulePositioningContext context = ValidContext();
+            context.EffectiveSettings.CheckPointLayerGuardSectionNameTemplate = "Birthday section";
+
+            RulePositioningResult result = await fixture.Strategy.CalculateAsync(
+                context,
+                CancellationToken.None);
+            session.Complete("COMPLETE");
+
+            List<string?> names = File.ReadAllLines(session.EventFilePath)
+                .Select(JObject.Parse)
+                .Select(item => item.Value<string>("eventName"))
+                .ToList();
+            Assert.Multiple(() =>
+            {
+                Assert.That(result, Is.TypeOf<RulePositioningSuccess>());
+                Assert.That(names, Does.Contain("strategy-entry"));
+                Assert.That(names, Does.Contain("template-result"));
+                Assert.That(names, Does.Contain("prepared-inputs"));
+                Assert.That(names, Does.Contain("section-name"));
+                Assert.That(names, Does.Contain("recipe-selection"));
+                Assert.That(names, Does.Contain("recipe-result"));
+            });
+        }
+        finally
+        {
+            session.Dispose();
+            RulePositioningForensicCapture.ResetForTests();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
     }
 
     [Test]

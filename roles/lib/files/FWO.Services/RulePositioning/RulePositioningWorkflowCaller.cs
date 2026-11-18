@@ -6,6 +6,7 @@ using FWO.Data.DeviceSpecificSettings;
 using FWO.Data.RulePositioning;
 using FWO.Data.Workflow;
 using FWO.Logging;
+using FWO.Services.RulePositioning.Diagnostics;
 
 namespace FWO.Services.RulePositioning;
 
@@ -45,6 +46,17 @@ public sealed class RulePositioningWorkflowCaller : IRulePositioningWorkflowCall
                 RulePositioningWorkflowStatus.NotApplicable);
         }
 
+        using RulePositioningForensicSession capture = RulePositioningForensicCapture.Begin(
+            implementationTask.Id,
+            requestTask.Id,
+            requestTask.TicketId,
+            implementationTask.DeviceId);
+        RulePositioningForensicCapture.Record("workflow", "applicability", new
+        {
+            applicable = true,
+            requestTask = RulePositioningForensicProjection.RequestTask(requestTask),
+            implementationTask
+        });
         RulePositioningFailure failure;
         try
         {
@@ -52,18 +64,29 @@ public sealed class RulePositioningWorkflowCaller : IRulePositioningWorkflowCall
             (Device Gateway, Management Management) target = await LoadTargetAsync(
                 requestTask,
                 implementationTask);
+            RulePositioningForensicCapture.Record("workflow", "target-loaded", new
+            {
+                gateway = RulePositioningForensicProjection.Device(target.Gateway),
+                management = RulePositioningForensicProjection.Management(target.Management)
+            });
             cancellationToken.ThrowIfCancellationRequested();
             DeviceSpecificSettingsLevel<GatewayDeviceSpecificSettings> settings =
                 await settingsManager.LoadLevelAsync<GatewayDeviceSpecificSettings>(
                     DeviceSpecificScopePath.ForGateway(target.Management, target.Gateway));
+            RulePositioningForensicCapture.Record("workflow", "settings-loaded", settings);
             cancellationToken.ThrowIfCancellationRequested();
             IReadOnlyCollection<WfReqTask>? ticketTasks = await LoadTicketTasksIfRequiredAsync(
                 requestTask,
                 settings.Settings.PositioningAlgorithm,
                 cancellationToken);
+            RulePositioningForensicCapture.Record(
+                "workflow",
+                "ticket-tasks-loaded",
+                RulePositioningForensicProjection.RequestTasks(ticketTasks));
             RulePositioningConfiguration? configuration = await LoadConfigurationIfRequiredAsync(
                 settings.Settings.PositioningAlgorithm,
                 cancellationToken);
+            RulePositioningForensicCapture.Record("workflow", "configuration-loaded", configuration);
 
             RulePositioningContext context = new(
                 implementationTask,
@@ -73,17 +96,30 @@ public sealed class RulePositioningWorkflowCaller : IRulePositioningWorkflowCall
                 settings.Settings,
                 ticketTasks,
                 configuration);
+            RulePositioningForensicCapture.Record("workflow", "context-created", new
+            {
+                context.ImplementationTask,
+                parentRequestTask = RulePositioningForensicProjection.RequestTask(context.ParentRequestTask),
+                targetGateway = RulePositioningForensicProjection.Device(context.TargetGateway),
+                targetManagement = RulePositioningForensicProjection.Management(context.TargetManagement),
+                context.EffectiveSettings,
+                ticketRequestTasks = RulePositioningForensicProjection.RequestTasks(context.TicketRequestTasks),
+                context.Configuration
+            });
             RulePositioningResult calculation = await positioningManager.CalculateAsync(
                 context,
                 cancellationToken);
+            RulePositioningForensicCapture.Record("workflow", "calculation-result", calculation);
             if (calculation is RulePositioningSuccess success)
             {
-                return await PersistAsync(
+                RulePositioningWorkflowOutcome outcome = await PersistAsync(
                     implementationTask.Id,
                     success.Position,
                     RulePositioningWorkflowStatus.Stored,
                     null,
                     cancellationToken);
+                capture.Complete("COMPLETE", outcome);
+                return outcome;
             }
 
             failure = calculation as RulePositioningFailure
@@ -91,22 +127,33 @@ public sealed class RulePositioningWorkflowCaller : IRulePositioningWorkflowCall
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            RulePositioningForensicCapture.Record("workflow", "cancelled", new
+            {
+                category = "CallerCancellation"
+            });
+            capture.Complete("INCOMPLETE", new { reason = "CallerCancellation" });
             throw;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            RulePositioningForensicCapture.Record("workflow", "unexpected-failure", new
+            {
+                exceptionType = exception.GetType().FullName
+            });
             failure = new RulePositioningFailure(RulePositioningFailureCategory.CalculationFailed);
         }
 
         cancellationToken.ThrowIfCancellationRequested();
         LogCalculationFailure(requestTask, implementationTask, failure);
-        return await PersistAsync(
+        RulePositioningWorkflowOutcome failureOutcome = await PersistAsync(
             implementationTask.Id,
             null,
             RulePositioningWorkflowStatus.ClearedAfterFailure,
             failure.Category,
             cancellationToken);
+        capture.Complete("COMPLETE", failureOutcome);
+        return failureOutcome;
     }
 
     /// <summary>Writes one correlated summary using a known cause when available.</summary>
@@ -222,16 +269,33 @@ public sealed class RulePositioningWorkflowCaller : IRulePositioningWorkflowCall
         RulePositioningWorkflowStatus status;
         try
         {
+            RulePositioningForensicCapture.Record("persistence", "persistence-request", new
+            {
+                implementationTaskId,
+                position,
+                successfulStatus,
+                failureCategory
+            });
             ReturnId result = await apiConnection.SendQueryAsync<ReturnId>(
                 RequestQueries.updateImplementationTaskRulePosition,
                 new { id = implementationTaskId, rulePosition = position });
             status = result.UpdatedIdLong == implementationTaskId
                 ? successfulStatus
                 : RulePositioningWorkflowStatus.PersistenceFailed;
+            RulePositioningForensicCapture.Record("persistence", "persistence-result", new
+            {
+                result,
+                status
+            });
         }
-        catch (Exception)
+        catch (Exception exception)
         {
             status = RulePositioningWorkflowStatus.PersistenceFailed;
+            RulePositioningForensicCapture.Record("persistence", "persistence-result", new
+            {
+                status,
+                exceptionType = exception.GetType().FullName
+            });
         }
 
         return LoggedOutcome(implementationTaskId, status, failureCategory);

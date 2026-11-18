@@ -12,7 +12,9 @@ using FWO.Data.Workflow;
 using FWO.Services.RulePositioning;
 using FWO.Services.RulePositioning.Blocks;
 using FWO.Services.RulePositioning.CheckPoint;
+using FWO.Services.RulePositioning.Diagnostics;
 using FWO.Test.Helpers;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 
 namespace FWO.Test;
@@ -56,6 +58,57 @@ internal class RulePositioningWorkflowCallerTest
             Assert.That(strategy.Context.TicketRequestTasks, Is.Null);
             Assert.That(api.LastPosition, Is.TypeOf<CheckPointRulePosition>());
         });
+    }
+
+    [Test]
+    public async Task CalculateAndPersistAsync_CapturesWorkflowHandoffsAndTerminalOutcome()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"workflow-forensics-{Guid.NewGuid():N}");
+        RulePositioningForensicCapture.ArtifactRoot = root;
+        try
+        {
+            RecordingApiConnection api = new() { TargetCredentialSecret = "must-never-enter-forensics" };
+            RulePositioningWorkflowCaller caller = Caller(api, new RecordingStrategy(Success()));
+            (WfReqTask requestTask, WfImplTask implementationTask) = Tasks();
+            requestTask.OnManagement = new Management
+            {
+                Id = kManagementId,
+                ImportCredential = new Credential { Secret = api.TargetCredentialSecret },
+                ExportCredential = new Credential { Secret = api.TargetCredentialSecret }
+            };
+
+            RulePositioningWorkflowOutcome outcome = await caller.CalculateAndPersistAsync(
+                requestTask,
+                implementationTask,
+                CancellationToken.None);
+
+            string eventFile = Directory.GetFiles(root, "events.jsonl", SearchOption.AllDirectories).Single();
+            List<JObject> events = File.ReadAllLines(eventFile).Select(JObject.Parse).ToList();
+            string rawArtifact = File.ReadAllText(eventFile);
+            List<string?> names = events.Select(item => item.Value<string>("eventName")).ToList();
+            Assert.Multiple(() =>
+            {
+                Assert.That(outcome.Status, Is.EqualTo(RulePositioningWorkflowStatus.Stored));
+                Assert.That(names, Does.Contain("applicability"));
+                Assert.That(names, Does.Contain("target-loaded"));
+                Assert.That(names, Does.Contain("settings-loaded"));
+                Assert.That(names, Does.Contain("context-created"));
+                Assert.That(names, Does.Contain("calculation-result"));
+                Assert.That(names, Does.Contain("persistence-result"));
+                Assert.That(events.Last()["payload"]?.Value<string>("status"), Is.EqualTo("COMPLETE"));
+                Assert.That(rawArtifact, Does.Not.Contain(api.TargetCredentialSecret));
+                Assert.That(rawArtifact, Does.Not.Contain("import_credential"));
+                Assert.That(rawArtifact, Does.Not.Contain("export_credential"));
+            });
+        }
+        finally
+        {
+            RulePositioningForensicCapture.ResetForTests();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
     }
 
     [TestCase(null)]
@@ -853,6 +906,7 @@ internal class RulePositioningWorkflowCallerTest
         public int TargetGatewayId { get; set; } = kGatewayId;
         public int TargetManagementId { get; set; } = kManagementId;
         public bool TargetHasManagement { get; set; } = true;
+        public string TargetCredentialSecret { get; set; } = "";
         public int TargetReads { get; private set; }
         public int SettingsReads { get; private set; }
         public int TicketReads { get; private set; }
@@ -983,7 +1037,9 @@ internal class RulePositioningWorkflowCallerTest
             {
                 Id = TargetManagementId,
                 Name = "Management",
-                DeviceType = new DeviceType { Id = 9, Name = "Check Point", Version = "R8x" }
+                DeviceType = new DeviceType { Id = 9, Name = "Check Point", Version = "R8x" },
+                ImportCredential = new Credential { Secret = TargetCredentialSecret },
+                ExportCredential = new Credential { Secret = TargetCredentialSecret }
             };
             return new Device
             {

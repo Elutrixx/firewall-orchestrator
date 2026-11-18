@@ -3,6 +3,7 @@ using FWO.Api.Client.Queries;
 using FWO.Basics;
 using FWO.Data;
 using FWO.Data.RulePositioning;
+using FWO.Services.RulePositioning.Diagnostics;
 using Newtonsoft.Json;
 using RulebaseGraphReadResult = FWO.Data.RulePositioning.PositioningResult<
     FWO.Services.RulePositioning.RulebaseGraphReadValue,
@@ -70,6 +71,13 @@ public sealed class RulebaseGraphSnapshotReader : IRulebaseGraphSnapshotReader
         {
             return Failure(importFailure);
         }
+        RulePositioningForensicCapture.Record("snapshot", "import-selected", new
+        {
+            managementId,
+            gatewayId,
+            importId,
+            candidates = importResult.Value
+        });
 
         QueryResult<List<GatewayWire>> gatewayResult = await QueryAsync<List<GatewayWire>>(
             RulePositioningQueries.getGatewayRulebaseLinksAtImport,
@@ -86,6 +94,14 @@ public sealed class RulebaseGraphSnapshotReader : IRulebaseGraphSnapshotReader
         {
             return Failure(RulebaseGraphReadFailureCategory.InvalidGraphData);
         }
+        RulePositioningForensicCapture.Record("snapshot", "link-endpoints", new
+        {
+            managementId,
+            gatewayId,
+            importId,
+            links = gateway.Links,
+            rulebaseIds
+        });
 
         QueryResult<List<RulebaseWire>> rulebaseResult = await QueryAsync<List<RulebaseWire>>(
             RulePositioningQueries.getRulebasesAtImport,
@@ -109,7 +125,13 @@ public sealed class RulebaseGraphSnapshotReader : IRulebaseGraphSnapshotReader
             return Failure(graphFailure);
         }
 
-        return RulebaseGraphReadResult.Success(readValue!);
+        RulePositioningForensicCapture.Record("snapshot", "snapshot-created", new
+        {
+            importId,
+            readValue!.Snapshot,
+            wireRulebases = rulebaseResult.Value
+        });
+        return RulebaseGraphReadResult.Success(readValue);
     }
 
     /// <summary>Validates the import query result and returns its single import identifier.</summary>
@@ -225,18 +247,53 @@ public sealed class RulebaseGraphSnapshotReader : IRulebaseGraphSnapshotReader
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        RulePositioningForensicCapture.Record("graphql", "query-request", new
+        {
+            operationName,
+            variables
+        });
         try
         {
-            T value = await apiConnection.SendQueryAsync<T>(query, variables, operationName)
+            ApiResponse<T> response = await apiConnection.SendQuerySafeAsync<T>(
+                    query,
+                    variables,
+                    operationName)
                 .WaitAsync(cancellationToken);
-            return new QueryResult<T>(true, value);
+            if (response.HasErrors)
+            {
+                RulePositioningForensicCapture.Record("graphql", "query-response", new
+                {
+                    operationName,
+                    succeeded = false,
+                    errorOrigin = response.ErrorOrigin,
+                    errorCount = response.Errors?.Length ?? 0,
+                    graphQlErrors = response.ErrorOrigin == ApiResponseErrorOrigin.GraphQlResponse
+                        ? response.Errors
+                        : null
+                });
+                return new QueryResult<T>(false, default);
+            }
+            RulePositioningForensicCapture.Record("graphql", "query-response", new
+            {
+                operationName,
+                succeeded = true,
+                value = response.Result
+            });
+            return new QueryResult<T>(true, response.Result);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
+            RulePositioningForensicCapture.Record("graphql", "query-response", new
+            {
+                operationName,
+                succeeded = false,
+                errorOrigin = ApiResponseErrorOrigin.ClientException,
+                exceptionType = exception.GetType().FullName
+            });
             return new QueryResult<T>(false, default);
         }
     }
@@ -514,8 +571,11 @@ public sealed class RulebaseGraphSnapshotReader : IRulebaseGraphSnapshotReader
     /// <summary>
     /// Creates one category-only reader failure.
     /// </summary>
-    private static RulebaseGraphReadResult Failure(RulebaseGraphReadFailureCategory category) =>
-        RulebaseGraphReadResult.Failure(category);
+    private static RulebaseGraphReadResult Failure(RulebaseGraphReadFailureCategory category)
+    {
+        RulePositioningForensicCapture.Record("snapshot", "validation-failure", new { category });
+        return RulebaseGraphReadResult.Failure(category);
+    }
 
     /// <summary>Captures a query value without exposing transport failure details.</summary>
     private sealed record QueryResult<T>(bool Succeeded, T? Value);

@@ -2,6 +2,7 @@ using FWO.Data.Middleware;
 using FWO.Data.RulePositioning;
 using FWO.Data.Workflow;
 using FWO.Services.Workflow;
+using FWO.Services.RulePositioning.Diagnostics;
 using NetTools;
 using CreationRuleNetworkResolutionResult = FWO.Data.RulePositioning.PositioningResult<
     FWO.Data.RulePositioning.CreationRuleNetworkInput,
@@ -25,12 +26,22 @@ public sealed class CreationRuleNetworkInputResolver(IFlowGroupResolver flowGrou
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            RulePositioningForensicCapture.Record("network-input", "network-input", new
+            {
+                accessTask = RulePositioningForensicProjection.RequestTask(accessTask),
+                ticketTasks = RulePositioningForensicProjection.RequestTasks(ticketTasks)
+            });
             ValidateAccessTask(accessTask);
             TicketObjectReferenceIndex referenceIndex = TicketObjectReferenceIndex.Create(
                 accessTask,
                 ticketTasks);
             List<WfReqElement> sources = ActiveSide(accessTask, ElemFieldType.source);
             List<WfReqElement> destinations = ActiveSide(accessTask, ElemFieldType.destination);
+            RulePositioningForensicCapture.Record("network-input", "network-active-elements", new
+            {
+                sources,
+                destinations
+            });
             if (sources.Count == 0 || destinations.Count == 0)
             {
                 throw Failure(CreationRuleNetworkResolutionFailureCategory.InvalidInput);
@@ -38,12 +49,30 @@ public sealed class CreationRuleNetworkInputResolver(IFlowGroupResolver flowGrou
 
             CatalogIndex catalog = await LoadCatalogAsync(
                 sources.Concat(destinations), referenceIndex, cancellationToken);
+            RulePositioningForensicCapture.Record("network-input", "network-catalog", new
+            {
+                accessElements = sources.Concat(destinations).ToList(),
+                catalog
+            });
             ResolutionContext context = new(referenceIndex, catalog, cancellationToken);
             List<IPAddressRange> sourceRanges = ResolveElements(sources, context);
             List<IPAddressRange> destinationRanges = ResolveElements(destinations, context);
+            IReadOnlyCollection<IPAddressRange> normalizedSources =
+                PositioningAddressRangeNormalizer.Distinct(sourceRanges);
+            IReadOnlyCollection<IPAddressRange> normalizedDestinations =
+                PositioningAddressRangeNormalizer.Distinct(destinationRanges);
+            RulePositioningForensicCapture.Record("network-input", "network-resolved", new
+            {
+                sources,
+                destinations,
+                sourceRanges,
+                destinationRanges,
+                normalizedSources,
+                normalizedDestinations
+            });
             return CreationRuleNetworkResolutionResult.Success(new CreationRuleNetworkInput(
-                PositioningAddressRangeNormalizer.Distinct(sourceRanges),
-                PositioningAddressRangeNormalizer.Distinct(destinationRanges)));
+                normalizedSources,
+                normalizedDestinations));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -51,10 +80,19 @@ public sealed class CreationRuleNetworkInputResolver(IFlowGroupResolver flowGrou
         }
         catch (NetworkResolutionException exception)
         {
+            RulePositioningForensicCapture.Record("network-input", "network-failure", new
+            {
+                exception.Category
+            });
             return CreationRuleNetworkResolutionResult.Failure(exception.Category);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
+            RulePositioningForensicCapture.Record("network-input", "network-failure", new
+            {
+                category = CreationRuleNetworkResolutionFailureCategory.UnexpectedFailure,
+                exceptionType = exception.GetType().FullName
+            });
             return CreationRuleNetworkResolutionResult.Failure(
                 CreationRuleNetworkResolutionFailureCategory.UnexpectedFailure);
         }
@@ -122,6 +160,13 @@ public sealed class CreationRuleNetworkInputResolver(IFlowGroupResolver flowGrou
             .Select(reference => reference.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (ids.Count == 0 && names.Count == 0)
         {
+            RulePositioningForensicCapture.Record("network-input", "network-catalog-loaded", new
+            {
+                requested,
+                ids,
+                names,
+                groups = new List<FlowNetworkGroupResolution>()
+            });
             return new CatalogIndex(new List<FlowNetworkGroupResolution>());
         }
         try
@@ -139,6 +184,13 @@ public sealed class CreationRuleNetworkInputResolver(IFlowGroupResolver flowGrou
                 groups.AddRange(await LoadCatalogChunkAsync(
                     new FlowGroupResolutionParameters { NetworkGroupNames = chunk }, cancellationToken));
             }
+            RulePositioningForensicCapture.Record("network-input", "network-catalog-loaded", new
+            {
+                requested,
+                ids,
+                names,
+                groups
+            });
             return new CatalogIndex(groups);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

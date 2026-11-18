@@ -1,10 +1,12 @@
 using FWO.Data.RulePositioning;
 using FWO.Services.RulePositioning.CheckPoint;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 
 namespace FWO.Test;
 
 [TestFixture]
+[NonParallelizable]
 public class CheckPointSectionNameTemplateTest
 {
     [TestCase("fixed section", false, false)]
@@ -97,6 +99,31 @@ public class CheckPointSectionNameTemplateTest
         });
 
         Assert.That(rendered, Is.EqualTo("PREFIX  SOURCE  SUFFIX"));
+    }
+
+    [Test]
+    public void ParseAndRender_CaptureTemplatePartsValuesAndRenderedProjection()
+    {
+        using ForensicCaptureTestScope capture = new();
+        CheckPointSectionNameTemplate template = Parse("[@@SOURCE_ZONE@@] < [@@DESTINATION_ZONE@@]");
+
+        Render(template, new Dictionary<CheckPointSectionNameVariable, string>()
+        {
+            [CheckPointSectionNameVariable.SourceZone] = " source ",
+            [CheckPointSectionNameVariable.DestinationZone] = " destination "
+        });
+        List<JObject> events = capture.CompleteAndRead();
+
+        JObject parsed = events.Single(item => item.Value<string>("eventName") == "template-parsed");
+        JObject rendered = events.Single(item => item.Value<string>("eventName") == "template-rendered");
+        Assert.Multiple(() =>
+        {
+            Assert.That(parsed["payload"]?["parts"], Has.Count.EqualTo(5));
+            Assert.That(rendered["payload"]?["result"]?.Value<string>("raw"),
+                Is.EqualTo("[SOURCE] < [DESTINATION]"));
+            Assert.That(rendered["payload"]?["values"]?["SourceZone"]?.Value<string>("trimmed"),
+                Is.EqualTo("source"));
+        });
     }
 
     [Test]

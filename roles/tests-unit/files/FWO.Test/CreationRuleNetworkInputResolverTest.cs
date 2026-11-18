@@ -4,6 +4,8 @@ using FWO.Data.Middleware;
 using FWO.Data.RulePositioning;
 using FWO.Data.Workflow;
 using FWO.Services.Workflow;
+using FWO.Services.RulePositioning.Diagnostics;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using CreationRuleNetworkResolutionResult = FWO.Data.RulePositioning.PositioningResult<
     FWO.Data.RulePositioning.CreationRuleNetworkInput,
@@ -12,6 +14,7 @@ using CreationRuleNetworkResolutionResult = FWO.Data.RulePositioning.Positioning
 namespace FWO.Test;
 
 [TestFixture]
+[NonParallelizable]
 public class CreationRuleNetworkInputResolverTest
 {
     private static readonly string[] kExpectedResolvedSourceAddresses = ["10.0.0.1", "10.0.0.2"];
@@ -38,6 +41,46 @@ public class CreationRuleNetworkInputResolverTest
             Assert.That(input.DestinationRanges[0].End.ToString(), Is.EqualTo("2001:db8::3"));
             Assert.That(input.SourceRanges, Is.Not.InstanceOf<List<NetTools.IPAddressRange>>());
         });
+    }
+
+    [Test]
+    public async Task ResolveAsync_CapturesOriginalElementsCatalogAndResolvedRanges()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"network-input-forensics-{Guid.NewGuid():N}");
+        RulePositioningForensicCapture.ArtifactRoot = root;
+        RulePositioningForensicSession session = RulePositioningForensicCapture.Begin(1, 2, 3, 4);
+        try
+        {
+            WfReqTask access = Access(
+                [Leaf(ElemFieldType.source, "192.0.2.1", null)],
+                [Leaf(ElemFieldType.destination, "198.51.100.1", null)]);
+
+            CreationRuleNetworkInput input = AssertSuccess(
+                await Resolver().ResolveAsync(access, [access], CancellationToken.None));
+            session.Complete("COMPLETE");
+
+            List<string?> names = File.ReadAllLines(session.EventFilePath)
+                .Select(JObject.Parse)
+                .Select(item => item.Value<string>("eventName"))
+                .ToList();
+            Assert.Multiple(() =>
+            {
+                Assert.That(input.SourceRanges, Has.Count.EqualTo(1));
+                Assert.That(names, Does.Contain("network-input"));
+                Assert.That(names, Does.Contain("network-active-elements"));
+                Assert.That(names, Does.Contain("network-catalog"));
+                Assert.That(names, Does.Contain("network-resolved"));
+            });
+        }
+        finally
+        {
+            session.Dispose();
+            RulePositioningForensicCapture.ResetForTests();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
     }
 
     [Test]

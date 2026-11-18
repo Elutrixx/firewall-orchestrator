@@ -105,6 +105,7 @@ namespace FWO.Test
             Assert.That(response.Errors, Is.Not.Null);
             Assert.That(response.Errors!, Does.Contain("boom"));
             Assert.That(response.Result, Is.Null);
+            Assert.That(response.ErrorOrigin, Is.EqualTo(ApiResponseErrorOrigin.GraphQlResponse));
         }
 
         [Test]
@@ -117,6 +118,7 @@ namespace FWO.Test
 
             Assert.That(response.HasErrors, Is.False);
             Assert.That(response.Result, Is.EqualTo("value"));
+            Assert.That(response.ErrorOrigin, Is.EqualTo(ApiResponseErrorOrigin.None));
         }
 
         [Test]
@@ -129,6 +131,7 @@ namespace FWO.Test
 
             Assert.That(response.HasErrors, Is.True);
             Assert.That(response.Result, Is.Null);
+            Assert.That(response.ErrorOrigin, Is.EqualTo(ApiResponseErrorOrigin.ClientException));
         }
 
         /// <summary>
@@ -145,6 +148,7 @@ namespace FWO.Test
             Assert.That(response.Errors, Is.Not.Null);
             Assert.That(response.Errors![0], Does.Contain("network down"));
             Assert.That(response.Result, Is.Null);
+            Assert.That(response.ErrorOrigin, Is.EqualTo(ApiResponseErrorOrigin.ClientException));
         }
 
         [Test]

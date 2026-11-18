@@ -4,6 +4,7 @@ using FWO.NetworkTopology;
 using FWO.Data.RulePositioning;
 using NetTools;
 using System.Net.Sockets;
+using FWO.Services.RulePositioning.Diagnostics;
 using CreationRuleZoneResolutionResult = FWO.Data.RulePositioning.PositioningResult<
     FWO.Compliance.RulePositioning.CreationRuleZoneInput,
     FWO.Compliance.RulePositioning.CreationRuleZoneResolutionFailureCategory>;
@@ -26,6 +27,18 @@ public sealed class CreationRuleZoneResolver : ICreationRuleZoneResolver
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            RulePositioningForensicCapture.Record("zone-input", "zone-input", new
+            {
+                sourceRanges = networkInput?.SourceRanges.Select(RangeEvidence).ToList(),
+                destinationRanges = networkInput?.DestinationRanges.Select(RangeEvidence).ToList(),
+                networkZones = networkZones.Select(ZoneEvidence).ToList(),
+                configuration = new
+                {
+                    configuration.DesignatedZoneMatrixId,
+                    configuration.AutoCalculateInternetZone,
+                    configuration.InternetLocalZoneName
+                }
+            });
             if (networkInput == null)
             {
                 return Task.FromResult<CreationRuleZoneResolutionResult>(
@@ -38,15 +51,18 @@ public sealed class CreationRuleZoneResolver : ICreationRuleZoneResolver
             }
             List<IPAddressRange> sourceRanges = networkInput.SourceRanges.ToList();
             List<IPAddressRange> destinationRanges = networkInput.DestinationRanges.ToList();
-            SideResolution source = ResolveSide(sourceRanges, validatedZones, configuration, cancellationToken);
-            SideResolution destination = ResolveSide(destinationRanges, validatedZones, configuration, cancellationToken);
-            return Task.FromResult(CreationRuleZoneResolutionResult.Success(
-                new CreationRuleZoneInput(
+            SideResolution source = ResolveSide(
+                "source", sourceRanges, validatedZones, configuration, cancellationToken);
+            SideResolution destination = ResolveSide(
+                "destination", destinationRanges, validatedZones, configuration, cancellationToken);
+            CreationRuleZoneInput result = new(
                     configuration.DesignatedZoneMatrixId,
                     source.Zones,
                     destination.Zones,
                     source.Coverage,
-                    destination.Coverage)));
+                    destination.Coverage);
+            RulePositioningForensicCapture.Record("zone-input", "zone-resolved", result);
+            return Task.FromResult(CreationRuleZoneResolutionResult.Success(result));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -149,6 +165,7 @@ public sealed class CreationRuleZoneResolver : ICreationRuleZoneResolver
 
     /// <summary>Resolves and converts one side of the rule.</summary>
     private static SideResolution ResolveSide(
+        string sideName,
         List<IPAddressRange> ranges,
         List<NetworkZone> networkZones,
         RulePositioningConfiguration configuration,
@@ -171,8 +188,38 @@ public sealed class CreationRuleZoneResolver : ICreationRuleZoneResolver
         {
             coverage = references.Count == 0 ? ZoneCoverage.None : ZoneCoverage.Partial;
         }
+        RulePositioningForensicCapture.Record("zone-input", "zone-side-resolution", new
+        {
+            sideName,
+            ranges = ranges.Select(RangeEvidence).ToList(),
+            candidateZones = networkZones.Select(ZoneEvidence).ToList(),
+            resolvedZones = resolvedZones.Select(ZoneEvidence).ToList(),
+            unassignableRanges = unassignableRanges.Select(RangeEvidence).ToList(),
+            references,
+            coverage
+        });
         return new SideResolution(references, coverage);
     }
+
+    /// <summary>Projects one address range without serializing mutable network-library internals.</summary>
+    private static object RangeEvidence(IPAddressRange range) => new
+    {
+        start = range.Begin.ToString(),
+        end = range.End.ToString(),
+        family = range.Begin.AddressFamily.ToString()
+    };
+
+    /// <summary>Projects one zone and all of its address ranges for forensic evidence.</summary>
+    private static object ZoneEvidence(NetworkZone zone) => new
+    {
+        zone.Id,
+        zone.IdString,
+        zone.Name,
+        zone.CriterionId,
+        zone.IsAutoCalculatedInternetZone,
+        zone.IsAutoCalculatedUndefinedInternalZone,
+        ranges = zone.IPRanges?.Select(RangeEvidence).ToList()
+    };
 
     /// <summary>Converts a compliance zone without retaining mutable caller data.</summary>
     private static PositioningZoneReference ToPositioningReference(NetworkZone zone)
@@ -230,6 +277,7 @@ public sealed class CreationRuleZoneResolver : ICreationRuleZoneResolver
     /// <summary>Creates a failed result.</summary>
     private static CreationRuleZoneResolutionResult Failure(CreationRuleZoneResolutionFailureCategory category)
     {
+        RulePositioningForensicCapture.Record("zone-input", "zone-failure", new { category });
         return CreationRuleZoneResolutionResult.Failure(category);
     }
 }
