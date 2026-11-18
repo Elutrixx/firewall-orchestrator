@@ -1490,6 +1490,21 @@ namespace FWO.Test
         }
 
         [Test]
+        public void RulePositioningTimeout_ForensicCaptureHasFiveMinuteBudget()
+        {
+            ActionHandler handler = new(
+                new ActionHandlerTestApiConn(),
+                new WfHandler(),
+                null,
+                true,
+                null,
+                null,
+                new RecordingRulePositioningWorkflowCaller());
+
+            Assert.That(handler.RulePositioningTimeout, Is.EqualTo(TimeSpan.FromMinutes(5)));
+        }
+
+        [Test]
         public async Task DoStateChangeActions_TimesOutRulePositioningWithoutFailingWorkflowActions()
         {
             RecordingRulePositioningWorkflowCaller caller = new()

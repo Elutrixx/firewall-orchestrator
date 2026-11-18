@@ -163,8 +163,7 @@ def database_command(database: str, implementation_task_id: int) -> list[str]:
 
 def database_query(implementation_task_id: int) -> str:
     """Return the scoped SQL; the integer was validated before interpolation."""
-    return f"""  # noqa: S608 - the interpolated value is a validated positive integer.
-WITH target AS (
+    return f"""WITH target AS (
     SELECT i.*, r.ticket_id, r.mgm_id AS request_mgm_id
     FROM request.impltask i
     LEFT JOIN request.reqtask r ON r.id = i.reqtask_id

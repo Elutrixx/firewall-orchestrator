@@ -7,7 +7,7 @@ namespace FWO.Services.Workflow;
 /// <summary>Rule-positioning activation owned by the workflow action handler.</summary>
 public partial class ActionHandler
 {
-    private static readonly TimeSpan kDefaultRulePositioningTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan kDefaultRulePositioningTimeout = TimeSpan.FromMinutes(5);
     private readonly IRulePositioningWorkflowCaller? rulePositioningWorkflowCaller;
 
     internal TimeSpan RulePositioningTimeout { get; set; } = kDefaultRulePositioningTimeout;

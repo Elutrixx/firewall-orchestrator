@@ -144,6 +144,7 @@ def test_output_directory_builds_one_unique_report_name(tmp_path: Path) -> None:
 def test_database_query_is_scoped_and_does_not_read_credentials() -> None:
     query = collector.database_query(42)
 
+    assert query.splitlines()[0] == "WITH target AS ("
     assert "WHERE i.id = 42" in query
     assert "latest_config" in query
     assert "import_control" in query

@@ -11,6 +11,8 @@ The importer boundary is `latest_config`: the report proves what the importer ha
 3. Prefer the existing last successful import. A fresh import is unnecessary when the report's `latest_config.import_id` agrees with the import selected by positioning. If no matching `latest_config` exists, request and separately authorize a new import; the collector never triggers one.
 4. Create or retrigger a new applicable implementation task and note its positive implementation-task ID.
 
+The temporary branch raises the positioning activation timeout from 30 seconds to five minutes so the exhaustive, fsynced capture can reach the section matcher. Run one relevant test task at a time, allow it to finish, and revert the branch afterward; ordinary workflow actions should not keep this diagnostic timeout.
+
 The default inventory values used below are `/usr/local/fworch`, `Release`, and .NET `10.0`. If the customer inventory overrides `fworch_home`, `dotnet_mode`, or `dotnet_version`, use the corresponding deployed publish path.
 
 ## Create the one-file report
