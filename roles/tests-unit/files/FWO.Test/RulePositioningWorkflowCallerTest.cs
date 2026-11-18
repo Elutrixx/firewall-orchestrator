@@ -1,6 +1,4 @@
 using System.Reflection;
-using System.Net;
-using System.Text;
 using FWO.Api.Client;
 using FWO.Api.Client.Queries;
 using FWO.Config.Api;
@@ -15,8 +13,6 @@ using FWO.Services.RulePositioning;
 using FWO.Services.RulePositioning.Blocks;
 using FWO.Services.RulePositioning.CheckPoint;
 using FWO.Test.Helpers;
-using GraphQL.Client.Http;
-using GraphQL.Client.Serializer.Newtonsoft;
 using NUnit.Framework;
 
 namespace FWO.Test;
@@ -428,20 +424,19 @@ internal class RulePositioningWorkflowCallerTest
         });
     }
 
-    [Test]
-    public async Task CalculateAndPersistAsync_LogsOneCorrelatedSpecificFailureSummary()
+    [TestCase(CheckPointSectionScopeBlock.kKind)]
+    [TestCase(CheckPointLayerGuardScopeBlock.kKind)]
+    public async Task CalculateAndPersistAsync_LogsBlockKindWithKnownScopeFailure(string blockKind)
     {
-        RulePositioningFailureDetail detail = RulePositioningFailureDetail.ForKnownFailure(
-            "recipe execution",
-            PositioningBlockFailureCategory.ScopeNotFound,
-            "The requested positioning scope was not found.",
-            CheckPointSectionScopeBlock.kKind);
+        string technicalDiagnostic =
+            $"recipe execution / {blockKind} / ScopeNotFound: " +
+            "The requested positioning scope was not found.";
         RecordingApiConnection api = new();
         RulePositioningWorkflowCaller caller = Caller(
             api,
             new RecordingStrategy(new RulePositioningFailure(
                 RulePositioningFailureCategory.CalculationFailed,
-                detail)));
+                technicalDiagnostic)));
         (WfReqTask requestTask, WfImplTask implementationTask) = Tasks();
 
         string output = await ConsoleOutput.CaptureAsync(async () =>
@@ -457,7 +452,7 @@ internal class RulePositioningWorkflowCallerTest
             Assert.That(errorLines[0], Does.Contain("gateway 21"));
             Assert.That(errorLines[0], Does.Contain(nameof(RulePositioningFailureCategory.CalculationFailed)));
             Assert.That(errorLines[0], Does.Contain(nameof(PositioningBlockFailureCategory.ScopeNotFound)));
-            Assert.That(errorLines[0], Does.Contain(CheckPointSectionScopeBlock.kKind));
+            Assert.That(errorLines[0], Does.Contain(blockKind));
             Assert.That(errorLines[0], Does.Contain("The requested positioning scope was not found."));
         });
     }
@@ -480,32 +475,6 @@ internal class RulePositioningWorkflowCallerTest
             Assert.That(errorLines, Has.Count.EqualTo(1));
             Assert.That(errorLines[0], Does.Contain(nameof(RulePositioningFailureCategory.InvalidInput)));
             Assert.That(errorLines[0], Does.Contain("The rule-positioning input is invalid."));
-        });
-    }
-
-    [Test]
-    public async Task CalculateAndPersistAsync_UnexpectedFailureKeepsSensitiveExceptionInDebugOnly()
-    {
-        RecordingApiConnection api = new() { ThrowOnTargetRead = true };
-        RulePositioningWorkflowCaller caller = CallerForApi(api, new RecordingStrategy(Success()));
-        (WfReqTask requestTask, WfImplTask implementationTask) = Tasks();
-
-        string output = await ConsoleOutput.CaptureAsync(async () =>
-            await caller.CalculateAndPersistAsync(requestTask, implementationTask, CancellationToken.None));
-
-        List<string> errorLines = CalculationErrorLines(output);
-        Assert.Multiple(() =>
-        {
-            Assert.That(errorLines, Has.Count.EqualTo(1));
-            Assert.That(errorLines[0], Does.Contain("target loading"));
-            Assert.That(errorLines[0], Does.Contain(nameof(InvalidOperationException)));
-            Assert.That(errorLines[0], Does.Not.Contain("sensitive target load failure"));
-#if DEBUG
-            Assert.That(output, Does.Contain("Debug - Rule positioning"));
-            Assert.That(output, Does.Contain("sensitive target load failure"));
-#else
-            Assert.That(output, Does.Not.Contain("sensitive target load failure"));
-#endif
         });
     }
 
@@ -556,48 +525,16 @@ internal class RulePositioningWorkflowCallerTest
     }
 
     [Test]
-    public async Task CalculateAndPersistAsync_ProductionGraphQlFailureEmitsOnlyBoundaryError()
-    {
-        const string sensitiveMessage = "sensitive-graphql-server-detail";
-        Queue<string> responses = new();
-        responses.Enqueue("{\"errors\":[{\"message\":\"" + sensitiveMessage + "\"}]}");
-        responses.Enqueue(
-            "{\"data\":{\"update_request_impltask_by_pk\":{\"UpdatedIdLong\":" +
-            kImplementationTaskId + "}}}");
-        using GraphQlApiConnection api = CreateGraphQlConnection(new SequenceHttpMessageHandler(responses));
-        RulePositioningWorkflowCaller caller = CallerForApi(api, new RecordingStrategy(Success()));
-        (WfReqTask requestTask, WfImplTask implementationTask) = Tasks();
-        RulePositioningWorkflowOutcome? outcome = null;
-
-        string output = await ConsoleOutput.CaptureAsync(async () =>
-            outcome = await caller.CalculateAndPersistAsync(
-                requestTask,
-                implementationTask,
-                CancellationToken.None));
-
-        List<string> errorLines = ErrorLines(output);
-        Assert.Multiple(() =>
-        {
-            Assert.That(outcome!.Status, Is.EqualTo(RulePositioningWorkflowStatus.ClearedAfterFailure));
-            Assert.That(errorLines, Has.Count.EqualTo(1));
-            Assert.That(errorLines[0], Does.Contain("Error - Rule positioning"));
-            Assert.That(errorLines[0], Does.Not.Contain(sensitiveMessage));
-        });
-    }
-
-    [Test]
     public async Task CalculateAndPersistAsync_LogsCalculationCauseWhenClearingPositionFails()
     {
-        RulePositioningFailureDetail detail = RulePositioningFailureDetail.ForKnownFailure(
-            "recipe execution",
-            PositioningBlockFailureCategory.NoInsertionPoint,
-            "No valid insertion point exists in the requested scope.");
+        const string technicalDiagnostic =
+            "recipe execution / NoInsertionPoint: No valid insertion point exists in the requested scope.";
         RecordingApiConnection api = new() { ThrowOnPositionWrite = true };
         RulePositioningWorkflowCaller caller = Caller(
             api,
             new RecordingStrategy(new RulePositioningFailure(
                 RulePositioningFailureCategory.CalculationFailed,
-                detail)));
+                technicalDiagnostic)));
         (WfReqTask requestTask, WfImplTask implementationTask) = Tasks();
         RulePositioningWorkflowOutcome? outcome = null;
 
@@ -826,14 +763,6 @@ internal class RulePositioningWorkflowCallerTest
         RecordingStrategy strategy,
         GlobalConfig? startupGlobalConfig = null)
     {
-        return CallerForApi(api, strategy, startupGlobalConfig);
-    }
-
-    private static RulePositioningWorkflowCaller CallerForApi(
-        ApiConnection api,
-        RecordingStrategy strategy,
-        GlobalConfig? startupGlobalConfig = null)
-    {
         return new RulePositioningWorkflowCaller(
             api,
             new RulePositioningManager([strategy]),
@@ -878,30 +807,6 @@ internal class RulePositioningWorkflowCallerTest
         return output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
             .Where(line => line.Contains(" Error - Rule positioning ", StringComparison.Ordinal))
             .ToList();
-    }
-
-    private static List<string> ErrorLines(string output)
-    {
-        return output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
-            .Where(line => line.Contains(" Error - ", StringComparison.Ordinal))
-            .ToList();
-    }
-
-    private static GraphQlApiConnection CreateGraphQlConnection(HttpMessageHandler handler)
-    {
-        GraphQlApiConnection connection = new("http://localhost");
-        GraphQLHttpClient client = new(new GraphQLHttpClientOptions
-        {
-            EndPoint = new Uri("http://localhost/graphql"),
-            HttpMessageHandler = handler,
-            UseWebSocketForQueriesAndMutations = false
-        }, new NewtonsoftJsonSerializer());
-        FieldInfo field = typeof(GraphQlApiConnection).GetField(
-            "graphQlClient",
-            BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("graphQlClient field not found.");
-        field.SetValue(connection, client);
-        return connection;
     }
 
     private static WfReqTask TicketTask(long id, int taskNumber, int managementId) => new()
@@ -1096,26 +1001,6 @@ internal class RulePositioningWorkflowCallerTest
             return (TValue)property.GetValue(variables)!;
         }
     }
-
-
-    private sealed class SequenceHttpMessageHandler(Queue<string> responses) : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            if (responses.Count == 0)
-            {
-                throw new InvalidOperationException("No GraphQL response remains.");
-            }
-            HttpResponseMessage response = new(HttpStatusCode.OK)
-            {
-                Content = new StringContent(responses.Dequeue(), Encoding.UTF8, "application/json")
-            };
-            return Task.FromResult(response);
-        }
-    }
-
     public enum InvalidTargetCase
     {
         Missing,

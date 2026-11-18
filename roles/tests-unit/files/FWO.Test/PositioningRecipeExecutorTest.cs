@@ -139,8 +139,6 @@ public class PositioningRecipeExecutorTest
             Assert.That(failure.Category, Is.EqualTo(PositioningBlockFailureCategory.UnexpectedExecutionFailure));
             Assert.That(failure.OriginatingBlockKind, Is.EqualTo("throwing"));
             Assert.That(failure.Diagnostic, Does.Not.Contain(secret));
-            Assert.That(failure.Exception, Is.TypeOf<InvalidOperationException>());
-            Assert.That(failure.Exception!.Message, Is.EqualTo(secret));
         });
     }
 

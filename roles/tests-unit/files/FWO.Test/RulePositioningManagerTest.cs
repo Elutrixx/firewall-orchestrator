@@ -329,7 +329,6 @@ public class RulePositioningManagerTest
             .CalculateAsync(ValidContext(), CancellationToken.None);
 
         AssertSafeCalculationFailure(result);
-        AssertUnexpectedFailureDetail(result, "strategy calculation", nameof(InvalidOperationException));
         AssertStrategyCalls(strategy, 1, 1);
     }
 
@@ -345,7 +344,6 @@ public class RulePositioningManagerTest
             .CalculateAsync(ValidContext(), CancellationToken.None);
 
         AssertSafeCalculationFailure(result);
-        AssertUnexpectedFailureDetail(result, "strategy calculation", nameof(OperationCanceledException));
         AssertStrategyCalls(strategy, 1, 1);
     }
 
@@ -358,7 +356,6 @@ public class RulePositioningManagerTest
             .CalculateAsync(ValidContext(), CancellationToken.None);
 
         AssertSafeCalculationFailure(result);
-        AssertUnexpectedFailureDetail(result, "strategy selection", nameof(InvalidOperationException));
         Assert.That(strategy.CalculationCallCount, Is.Zero);
     }
 
@@ -596,22 +593,6 @@ public class RulePositioningManagerTest
         {
             Assert.That(diagnostic, Does.Not.Contain(kSensitiveCredential));
             Assert.That(diagnostic, Does.Not.Contain(kCompleteRuleContent));
-        });
-    }
-
-    /// <summary>Verifies retained detail for an unexpected manager exception.</summary>
-    private static void AssertUnexpectedFailureDetail(
-        RulePositioningResult result,
-        string expectedStage,
-        string expectedExceptionType)
-    {
-        RulePositioningFailureDetail? detail = ((RulePositioningFailure)result).Detail;
-        Assert.Multiple(() =>
-        {
-            Assert.That(detail, Is.Not.Null);
-            Assert.That(detail!.Stage, Is.EqualTo(expectedStage));
-            Assert.That(detail.SpecificCategory, Is.EqualTo(expectedExceptionType));
-            Assert.That(detail.Exception, Is.Not.Null);
         });
     }
 

@@ -24,18 +24,6 @@ public enum CheckPointGraphRecipeSelectionFailureCategory
     InvalidRecipe
 }
 
-/// <summary>Provides fixed diagnostics for graph-only recipe-selection failures.</summary>
-public static class CheckPointGraphRecipeSelectionFailureDiagnostics
-{
-    /// <summary>Maps a graph-only recipe-selection category to fixed diagnostic text.</summary>
-    public static string GetDiagnostic(this CheckPointGraphRecipeSelectionFailureCategory category) => category switch
-    {
-        CheckPointGraphRecipeSelectionFailureCategory.NoMatchingRecipe =>
-            "No graph-only Check Point positioning recipe matches the selected algorithm.",
-        _ => "The graph-only Check Point positioning recipe is invalid."
-    };
-}
-
 /// <summary>Provides the generic end-of-initial-layer Check Point recipe.</summary>
 public sealed class CheckPointGraphPositioningRecipeCatalog : ICheckPointGraphPositioningRecipeCatalog
 {

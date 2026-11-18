@@ -195,28 +195,6 @@ internal class CreationRuleZoneResolverTest
     }
 
     [Test]
-    public async Task ResolveAsync_UnexpectedZoneCollectionFailureRetainsExceptionForBoundaryLogging()
-    {
-        InvalidOperationException exception = new("sensitive zone collection failure");
-        List<IPAddressRange> sourceRanges = [Range("10.0.0.1")];
-        List<IPAddressRange> destinationRanges = [Range("10.0.0.2")];
-        CreationRuleNetworkInput input = Input(sourceRanges, destinationRanges);
-
-        CreationRuleZoneResolutionResult result = await Resolver().ResolveAsync(
-            input,
-            new ThrowingZoneCollection(exception),
-            Config(autoCalculateInternetZone: false),
-            CancellationToken.None);
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(Failure(result).Category,
-                Is.EqualTo(CreationRuleZoneResolutionFailureCategory.UnexpectedFailure));
-            Assert.That(result.Exception, Is.SameAs(exception));
-        });
-    }
-
-    [Test]
     public void ResultContracts_DefensivelyCopyAndUseSafeUnknownDiagnostic()
     {
         List<PositioningZoneReference> source = [new(1, "one", "One", false, false, PositioningZoneKind.Persisted)];
@@ -321,15 +299,6 @@ internal class CreationRuleZoneResolverTest
                 yield return zones[index];
             }
         }
-
-        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
-    }
-
-    private sealed class ThrowingZoneCollection(Exception exception) : IReadOnlyCollection<NetworkZone>
-    {
-        public int Count => throw exception;
-
-        public IEnumerator<NetworkZone> GetEnumerator() => throw exception;
 
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }

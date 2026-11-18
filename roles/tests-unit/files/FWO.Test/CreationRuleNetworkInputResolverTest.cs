@@ -493,40 +493,6 @@ public class CreationRuleNetworkInputResolverTest
     }
 
     [Test]
-    public async Task CatalogQueryFailure_RetainsUnexpectedExceptionForBoundaryLogging()
-    {
-        InvalidOperationException exception = new("sensitive catalog failure");
-        List<WfReqElement> sourceElements =
-        [
-            new WfReqElement { Field = "source", GroupName = "catalog" }
-        ];
-        List<WfReqElement> destinationElements =
-        [
-            Leaf(ElemFieldType.destination, "203.0.113.1", "203.0.113.1")
-        ];
-        WfReqTask access = Access(
-            sourceElements,
-            destinationElements);
-        FakeFlowGroupResolver groups = new(new FlowGroupResolutionResult())
-        {
-            Exception = exception
-        };
-        List<WfReqTask> ticketTasks = [access];
-
-        CreationRuleNetworkResolutionResult result = await Resolver(groups).ResolveAsync(
-            access,
-            ticketTasks,
-            CancellationToken.None);
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(AssertFailure(result),
-                Is.EqualTo(CreationRuleNetworkResolutionFailureCategory.GroupQueryFailed));
-            Assert.That(result.Exception, Is.SameAs(exception));
-        });
-    }
-
-    [Test]
     public async Task PriorObjectModify_ReplacesDirectLeaf()
     {
         WfReqElement source = Leaf(ElemFieldType.source, "10.0.0.1", "10.0.0.1");

@@ -57,12 +57,10 @@ public sealed class CreationRuleZoneResolver : ICreationRuleZoneResolver
             return Task.FromResult<CreationRuleZoneResolutionResult>(
                 Failure(CreationRuleZoneResolutionFailureCategory.InvalidAddress));
         }
-        catch (Exception exception)
+        catch (Exception)
         {
             return Task.FromResult<CreationRuleZoneResolutionResult>(
-                CreationRuleZoneResolutionResult.Failure(
-                    CreationRuleZoneResolutionFailureCategory.UnexpectedFailure,
-                    exception));
+                Failure(CreationRuleZoneResolutionFailureCategory.UnexpectedFailure));
         }
     }
 

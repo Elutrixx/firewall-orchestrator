@@ -45,79 +45,61 @@ public sealed class RulePositioningWorkflowCaller : IRulePositioningWorkflowCall
                 RulePositioningWorkflowStatus.NotApplicable);
         }
 
-        RulePositioningSuccess? success = null;
-        RulePositioningFailure? failure = null;
-        string currentStage = "workflow preparation";
-        using (apiConnection.SuppressErrorLogging())
+        RulePositioningFailure failure;
+        try
         {
-            try
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                currentStage = "target loading";
-                (Device Gateway, Management Management) target = await LoadTargetAsync(
-                    requestTask,
-                    implementationTask);
-                cancellationToken.ThrowIfCancellationRequested();
-                currentStage = "settings loading";
-                DeviceSpecificSettingsLevel<GatewayDeviceSpecificSettings> settings =
-                    await settingsManager.LoadLevelAsync<GatewayDeviceSpecificSettings>(
-                        DeviceSpecificScopePath.ForGateway(target.Management, target.Gateway));
-                cancellationToken.ThrowIfCancellationRequested();
-                currentStage = "ticket loading";
-                IReadOnlyCollection<WfReqTask>? ticketTasks = await LoadTicketTasksIfRequiredAsync(
-                    requestTask,
-                    settings.Settings.PositioningAlgorithm,
-                    cancellationToken);
-                currentStage = "configuration loading";
-                RulePositioningConfiguration? configuration = await LoadConfigurationIfRequiredAsync(
-                    settings.Settings.PositioningAlgorithm,
-                    cancellationToken);
-
-                currentStage = "context construction";
-                RulePositioningContext context = new(
-                    implementationTask,
-                    requestTask,
-                    target.Gateway,
-                    target.Management,
-                    settings.Settings,
-                    ticketTasks,
-                    configuration);
-                currentStage = "strategy calculation";
-                RulePositioningResult calculation = await positioningManager.CalculateAsync(
-                    context,
-                    cancellationToken);
-                success = calculation as RulePositioningSuccess;
-                failure = calculation as RulePositioningFailure;
-                if (success == null && failure == null)
-                {
-                    failure = UnexpectedCalculationResult();
-                }
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception exception)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                failure = new RulePositioningFailure(
-                    RulePositioningFailureCategory.CalculationFailed,
-                    RulePositioningFailureDetail.ForUnexpectedException(currentStage, exception));
-            }
-        }
-
-        if (success != null)
-        {
-            return await PersistAsync(
-                implementationTask.Id,
-                success.Position,
-                RulePositioningWorkflowStatus.Stored,
-                null,
+            cancellationToken.ThrowIfCancellationRequested();
+            (Device Gateway, Management Management) target = await LoadTargetAsync(
+                requestTask,
+                implementationTask);
+            cancellationToken.ThrowIfCancellationRequested();
+            DeviceSpecificSettingsLevel<GatewayDeviceSpecificSettings> settings =
+                await settingsManager.LoadLevelAsync<GatewayDeviceSpecificSettings>(
+                    DeviceSpecificScopePath.ForGateway(target.Management, target.Gateway));
+            cancellationToken.ThrowIfCancellationRequested();
+            IReadOnlyCollection<WfReqTask>? ticketTasks = await LoadTicketTasksIfRequiredAsync(
+                requestTask,
+                settings.Settings.PositioningAlgorithm,
                 cancellationToken);
+            RulePositioningConfiguration? configuration = await LoadConfigurationIfRequiredAsync(
+                settings.Settings.PositioningAlgorithm,
+                cancellationToken);
+
+            RulePositioningContext context = new(
+                implementationTask,
+                requestTask,
+                target.Gateway,
+                target.Management,
+                settings.Settings,
+                ticketTasks,
+                configuration);
+            RulePositioningResult calculation = await positioningManager.CalculateAsync(
+                context,
+                cancellationToken);
+            if (calculation is RulePositioningSuccess success)
+            {
+                return await PersistAsync(
+                    implementationTask.Id,
+                    success.Position,
+                    RulePositioningWorkflowStatus.Stored,
+                    null,
+                    cancellationToken);
+            }
+
+            failure = calculation as RulePositioningFailure
+                ?? new RulePositioningFailure(RulePositioningFailureCategory.CalculationFailed);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            failure = new RulePositioningFailure(RulePositioningFailureCategory.CalculationFailed);
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        failure ??= UnexpectedCalculationResult();
         LogCalculationFailure(requestTask, implementationTask, failure);
         return await PersistAsync(
             implementationTask.Id,
@@ -127,35 +109,18 @@ public sealed class RulePositioningWorkflowCaller : IRulePositioningWorkflowCall
             cancellationToken);
     }
 
-    /// <summary>Creates a detailed failure for an unexpected calculation result type.</summary>
-    private static RulePositioningFailure UnexpectedCalculationResult()
-    {
-        RulePositioningFailureDetail detail = RulePositioningFailureDetail.ForKnownFailure(
-            "strategy calculation",
-            WorkflowFailureCategory.UnexpectedCalculationResult,
-            "The rule-positioning strategy returned an unexpected result.");
-        return new RulePositioningFailure(RulePositioningFailureCategory.CalculationFailed, detail);
-    }
-
-    /// <summary>Writes one correlated normal summary and optional debug-only exception detail.</summary>
+    /// <summary>Writes one correlated summary using a known cause when available.</summary>
     private static void LogCalculationFailure(
         WfReqTask requestTask,
         WfImplTask implementationTask,
         RulePositioningFailure failure)
     {
-        string technicalSummary = failure.Detail?.ToLogSummary() ?? failure.Diagnostic;
+        string technicalSummary = failure.TechnicalDiagnostic ?? failure.Diagnostic;
         Log.WriteError(
             kLogTitle,
             $"Rule positioning failed for implementation task {implementationTask.Id}, " +
             $"request task {requestTask.Id}, ticket {requestTask.TicketId}, " +
             $"gateway {implementationTask.DeviceId ?? 0}: {failure.Category}; {technicalSummary}");
-        if (failure.Detail?.Exception != null)
-        {
-            Log.WriteDebug(
-                kLogTitle,
-                $"Rule positioning exception for implementation task {implementationTask.Id}: " +
-                failure.Detail.Exception);
-        }
     }
 
     /// <summary>Loads one current immutable global-settings snapshot for customer positioning.</summary>
@@ -283,10 +248,5 @@ public sealed class RulePositioningWorkflowCaller : IRulePositioningWorkflowCall
             kLogTitle,
             $"Implementation task {implementationTaskId}: {status}; failure category: {category}.");
         return new RulePositioningWorkflowOutcome(status, failureCategory);
-    }
-
-    private enum WorkflowFailureCategory
-    {
-        UnexpectedCalculationResult
     }
 }

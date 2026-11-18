@@ -104,13 +104,9 @@ public sealed class CheckPointGraphRulePositioningStrategy : IRulePositioningStr
         {
             throw;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            return Failure(
-                RulePositioningFailureCategory.CalculationFailed,
-                RulePositioningFailureDetail.ForUnexpectedException(
-                    "graph strategy calculation",
-                    exception));
+            return Failure(RulePositioningFailureCategory.CalculationFailed);
         }
     }
 
@@ -143,7 +139,7 @@ public sealed class CheckPointGraphRulePositioningStrategy : IRulePositioningStr
             "graph recipe selection",
             category,
             failureCategory,
-            failureCategory.GetDiagnostic());
+            SelectionDiagnostic(failureCategory));
     }
 
     /// <summary>Maps block failures to the public positioning contract.</summary>
@@ -156,15 +152,6 @@ public sealed class CheckPointGraphRulePositioningStrategy : IRulePositioningStr
         RulePositioningFailureCategory category = failure.Category == PositioningBlockFailureCategory.InvalidRecipe
             ? RulePositioningFailureCategory.ConfigurationInvalid
             : RulePositioningFailureCategory.CalculationFailed;
-        if (failure.Exception != null)
-        {
-            return Failure(
-                category,
-                RulePositioningFailureDetail.ForUnexpectedException(
-                    "graph recipe execution",
-                    failure.Exception,
-                    failure.OriginatingBlockKind));
-        }
         return KnownFailure(
             "graph recipe execution",
             category,
@@ -179,14 +166,6 @@ public sealed class CheckPointGraphRulePositioningStrategy : IRulePositioningStr
         return new RulePositioningFailure(category);
     }
 
-    /// <summary>Creates a failure retaining bounded technical detail.</summary>
-    private static RulePositioningFailure Failure(
-        RulePositioningFailureCategory category,
-        RulePositioningFailureDetail detail)
-    {
-        return new RulePositioningFailure(category, detail);
-    }
-
     /// <summary>Creates a failure from one typed lower-level cause.</summary>
     private static RulePositioningFailure KnownFailure(
         string stage,
@@ -195,13 +174,16 @@ public sealed class CheckPointGraphRulePositioningStrategy : IRulePositioningStr
         string diagnostic,
         string? originatingBlockKind = null)
     {
-        RulePositioningFailureDetail detail = RulePositioningFailureDetail.ForKnownFailure(
-            stage,
-            specificCategory,
-            diagnostic,
-            originatingBlockKind);
-        return Failure(category, detail);
+        string block = originatingBlockKind == null ? "" : $" / {originatingBlockKind}";
+        return new RulePositioningFailure(
+            category,
+            $"{stage}{block} / {specificCategory}: {diagnostic}");
     }
+
+    private static string SelectionDiagnostic(CheckPointGraphRecipeSelectionFailureCategory category) =>
+        category == CheckPointGraphRecipeSelectionFailureCategory.NoMatchingRecipe
+            ? "No graph-only Check Point positioning recipe matches the selected algorithm."
+            : "The graph-only Check Point positioning recipe is invalid.";
 
     private enum StrategyFailureCategory
     {

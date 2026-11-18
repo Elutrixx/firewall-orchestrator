@@ -17,7 +17,6 @@ namespace FWO.Api.Client
         public string ApiServerUri { get; private set; } = "";
 
         private GraphQLHttpClient? graphQlClient;
-        private readonly AsyncLocal<int> errorLoggingSuppressionDepth = new();
         // Set inside subscriptionsLock, so a reconnect that already passed its own disposal
         // check cannot rebind subscriptions onto a client this instance is tearing down.
         private bool _disposed;
@@ -77,13 +76,6 @@ namespace FWO.Api.Client
             Initialize(ApiServerUri);
         }
 
-        /// <inheritdoc />
-        public override IDisposable SuppressErrorLogging()
-        {
-            errorLoggingSuppressionDepth.Value++;
-            return new ErrorLoggingSuppressionScope(this);
-        }
-
         /// <summary>
         /// Sends an APICall (query, mutation)
         /// NB: SendQueryAsync always returns an array of objects (even if the result is a single element)
@@ -117,7 +109,7 @@ namespace FWO.Api.Client
 
                     foreach (GraphQLError error in response.Errors)
                     {
-                        WriteError($"Error while sending query to GraphQL API. Caught by GraphQL client library. \nMessage: {error.Message}");
+                        Log.WriteError(LogCategory, $"Error while sending query to GraphQL API. Caught by GraphQL client library. \nMessage: {error.Message}");
                         errorMessage += $"{error.Message}\n";
                     }
 
@@ -139,9 +131,7 @@ namespace FWO.Api.Client
 
             catch (Exception exception)
             {
-                WriteError(
-                    $"Error while sending query to GraphQL API. Query: {query}, variables: {(variables != null ? "<redacted>" : "")}",
-                    exception);
+                Log.WriteError(LogCategory, $"Error while sending query to GraphQL API. Query: {query}, variables: {(variables != null ? "<redacted>" : "")}", exception);
                 throw;
             }
         }
@@ -164,7 +154,7 @@ namespace FWO.Api.Client
                 {
                     List<string> errorMessages = response.Errors.Select(error =>
                     {
-                        WriteError($"Error while sending query to GraphQL API. Caught by GraphQL client library. \nMessage: {error.Message}");
+                        Log.WriteError(LogCategory, $"Error while sending query to GraphQL API. Caught by GraphQL client library. \nMessage: {error.Message}");
                         return error.Message;
                     }).ToList();
                     return new ApiResponse<QueryResponseType>(errorMessages.ToArray());
@@ -184,9 +174,7 @@ namespace FWO.Api.Client
             }
             catch (Exception exception)
             {
-                WriteError(
-                    $"Error while sending query to GraphQL API. Query: {query}, variables: {(variables != null ? "<redacted>" : "")}",
-                    exception);
+                Log.WriteError(LogCategory, $"Error while sending query to GraphQL API. Query: {query}, variables: {(variables != null ? "<redacted>" : "")}", exception);
                 return new ApiResponse<QueryResponseType>(exception.Message);
             }
         }
@@ -344,7 +332,7 @@ namespace FWO.Api.Client
 
                 foreach (GraphQLError error in chunkResponse.Errors)
                 {
-                    WriteError($"Error while sending query to GraphQL API. Caught by GraphQL client library. \nMessage: {error.Message}");
+                    Log.WriteError(LogCategory, $"Error while sending query to GraphQL API. Caught by GraphQL client library. \nMessage: {error.Message}");
                     errorMessage += $"{error.Message}\n";
                 }
 
@@ -533,30 +521,6 @@ namespace FWO.Api.Client
             }
         }
 
-        private void WriteError(string message)
-        {
-            if (errorLoggingSuppressionDepth.Value == 0)
-            {
-                Log.WriteError(LogCategory, message);
-            }
-        }
-
-        private void WriteError(string message, Exception exception)
-        {
-            if (errorLoggingSuppressionDepth.Value == 0)
-            {
-                Log.WriteError(LogCategory, message, exception);
-            }
-        }
-
-        private void EndErrorLoggingSuppression()
-        {
-            if (errorLoggingSuppressionDepth.Value > 0)
-            {
-                errorLoggingSuppressionDepth.Value--;
-            }
-        }
-
         protected override void Dispose(bool disposing)
         {
             if (disposing)
@@ -616,16 +580,6 @@ namespace FWO.Api.Client
                     request.Headers.Add("x-hasura-role", role);
                 }
                 return request;
-            }
-        }
-
-        private sealed class ErrorLoggingSuppressionScope(GraphQlApiConnection owner) : IDisposable
-        {
-            private GraphQlApiConnection? owner = owner;
-
-            public void Dispose()
-            {
-                Interlocked.Exchange(ref owner, null)?.EndErrorLoggingSuppression();
             }
         }
     }

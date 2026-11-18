@@ -132,9 +132,8 @@ internal class CheckPointGraphPositioningTest
         Assert.Multiple(() =>
         {
             Assert.That(failure.Category, Is.EqualTo(RulePositioningFailureCategory.CalculationFailed));
-            Assert.That(failure.Detail, Is.Not.Null);
-            Assert.That(failure.Detail!.SpecificCategory, Is.EqualTo(nameof(PositioningBlockFailureCategory.InvalidSnapshot)));
-            Assert.That(failure.Detail.OriginatingBlockKind, Is.EqualTo(CheckPointLayerScopeBlock.kKind));
+            Assert.That(failure.TechnicalDiagnostic, Does.Contain(
+                $"{CheckPointLayerScopeBlock.kKind} / {nameof(PositioningBlockFailureCategory.InvalidSnapshot)}"));
         });
     }
 
@@ -190,9 +189,8 @@ internal class CheckPointGraphPositioningTest
         Assert.Multiple(() =>
         {
             Assert.That(failure.Category, Is.EqualTo(expectedCategory));
-            Assert.That(failure.Detail, Is.Not.Null);
-            Assert.That(failure.Detail!.SpecificCategory, Is.EqualTo(graphCategory.ToString()));
-            Assert.That(failure.Detail.Diagnostic, Is.EqualTo(graphCategory.GetDiagnostic()));
+            Assert.That(failure.TechnicalDiagnostic,
+                Is.EqualTo($"rulebase graph / {graphCategory}: {graphCategory.GetDiagnostic()}"));
         });
     }
 
@@ -238,14 +236,8 @@ internal class CheckPointGraphPositioningTest
 
         RulePositioningResult result = await strategy.CalculateAsync(Context(), CancellationToken.None);
 
-        RulePositioningFailure failure = (RulePositioningFailure)result;
-        Assert.Multiple(() =>
-        {
-            Assert.That(failure.Category, Is.EqualTo(RulePositioningFailureCategory.CalculationFailed));
-            Assert.That(failure.Detail, Is.Not.Null);
-            Assert.That(failure.Detail!.Stage, Is.EqualTo("graph strategy calculation"));
-            Assert.That(failure.Detail.SpecificCategory, Is.EqualTo(nameof(InvalidOperationException)));
-        });
+        Assert.That(((RulePositioningFailure)result).Category,
+            Is.EqualTo(RulePositioningFailureCategory.CalculationFailed));
     }
 
     private static RulePositioningContext Context()

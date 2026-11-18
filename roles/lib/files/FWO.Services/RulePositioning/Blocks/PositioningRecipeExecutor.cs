@@ -56,22 +56,19 @@ public sealed class PositioningRecipeExecutor<TContext, TOutput>
         {
             throw;
         }
-        catch (Exception exception)
+        catch
         {
-            return UnexpectedFailure(node.Kind, exception);
+            return UnexpectedFailure(node.Kind);
         }
     }
 
     /// <summary>
     /// Converts unexpected implementation failures into a safe typed result.
     /// </summary>
-    private static PositioningBlockFailure<TOutput> UnexpectedFailure(
-        string blockKind,
-        Exception? exception = null)
+    private static PositioningBlockFailure<TOutput> UnexpectedFailure(string blockKind)
     {
         return new PositioningBlockFailure<TOutput>(
             PositioningBlockFailureCategory.UnexpectedExecutionFailure,
-            blockKind,
-            exception);
+            blockKind);
     }
 }

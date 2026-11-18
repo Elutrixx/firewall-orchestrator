@@ -80,13 +80,9 @@ public sealed class CheckPointRulePositioningStrategy : IRulePositioningStrategy
         {
             throw;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            return Failure(
-                RulePositioningFailureCategory.CalculationFailed,
-                RulePositioningFailureDetail.ForUnexpectedException(
-                    "ticket-aware strategy calculation",
-                    exception));
+            return Failure(RulePositioningFailureCategory.CalculationFailed);
         }
     }
 
@@ -285,8 +281,7 @@ public sealed class CheckPointRulePositioningStrategy : IRulePositioningStrategy
             "creation-rule networks",
             category,
             failureCategory,
-            failureCategory.GetDiagnostic(),
-            exception: result.Exception);
+            failureCategory.GetDiagnostic());
     }
 
     /// <summary>Maps fixed-import layer-guard failures to the public positioning contract.</summary>
@@ -358,8 +353,7 @@ public sealed class CheckPointRulePositioningStrategy : IRulePositioningStrategy
             "creation-rule zones",
             category,
             failureCategory,
-            failureCategory.GetDiagnostic(),
-            exception: result.Exception);
+            failureCategory.GetDiagnostic());
     }
 
     /// <summary>Maps recipe-selection failures to the Phase 1 contract.</summary>
@@ -385,15 +379,6 @@ public sealed class CheckPointRulePositioningStrategy : IRulePositioningStrategy
         RulePositioningFailureCategory category = failure.Category == PositioningBlockFailureCategory.InvalidRecipe
                 ? RulePositioningFailureCategory.ConfigurationInvalid
                 : RulePositioningFailureCategory.CalculationFailed;
-        if (failure.Exception != null)
-        {
-            return Failure(
-                category,
-                RulePositioningFailureDetail.ForUnexpectedException(
-                    "recipe execution",
-                    failure.Exception,
-                    failure.OriginatingBlockKind));
-        }
         return KnownFailure(
             "recipe execution",
             category,
@@ -408,30 +393,18 @@ public sealed class CheckPointRulePositioningStrategy : IRulePositioningStrategy
         return new RulePositioningFailure(category);
     }
 
-    /// <summary>Creates a failure retaining bounded technical detail.</summary>
-    private static RulePositioningFailure Failure(
-        RulePositioningFailureCategory category,
-        RulePositioningFailureDetail detail)
-    {
-        return new RulePositioningFailure(category, detail);
-    }
-
     /// <summary>Creates a failure from one typed lower-level cause.</summary>
     private static RulePositioningFailure KnownFailure(
         string stage,
         RulePositioningFailureCategory category,
         Enum specificCategory,
         string diagnostic,
-        string? originatingBlockKind = null,
-        Exception? exception = null)
+        string? originatingBlockKind = null)
     {
-        RulePositioningFailureDetail detail = RulePositioningFailureDetail.ForKnownFailure(
-            stage,
-            specificCategory,
-            diagnostic,
-            originatingBlockKind,
-            exception);
-        return Failure(category, detail);
+        string block = originatingBlockKind == null ? "" : $" / {originatingBlockKind}";
+        return new RulePositioningFailure(
+            category,
+            $"{stage}{block} / {specificCategory}: {diagnostic}");
     }
 
     private enum StrategyFailureCategory

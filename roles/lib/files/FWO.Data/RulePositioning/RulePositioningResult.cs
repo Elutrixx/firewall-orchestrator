@@ -45,12 +45,14 @@ public sealed class RulePositioningSuccess : RulePositioningResult
 /// </summary>
 public sealed class RulePositioningFailure : RulePositioningResult
 {
+    private const int kMaxTechnicalDiagnosticLength = 512;
+
     /// <summary>Gets the stable failure category.</summary>
     public RulePositioningFailureCategory Category { get; }
     /// <summary>Gets the fixed safe failure diagnostic.</summary>
     public string Diagnostic { get; }
-    /// <summary>Gets optional technical detail intended for middleware diagnostics.</summary>
-    public RulePositioningFailureDetail? Detail { get; }
+    /// <summary>Gets an optional bounded summary of one known technical cause.</summary>
+    public string? TechnicalDiagnostic { get; }
 
     /// <summary>
     /// Creates a failed result without accepting potentially sensitive caller content.
@@ -59,14 +61,28 @@ public sealed class RulePositioningFailure : RulePositioningResult
         : this(category, null)
     { }
 
-    /// <summary>Creates a failed result with optional bounded technical detail.</summary>
+    /// <summary>Creates a failed result with an optional known-cause diagnostic.</summary>
     public RulePositioningFailure(
         RulePositioningFailureCategory category,
-        RulePositioningFailureDetail? detail)
+        string? technicalDiagnostic)
     {
         Category = category;
         Diagnostic = DiagnosticFor(category);
-        Detail = detail;
+        TechnicalDiagnostic = NormalizeTechnicalDiagnostic(technicalDiagnostic);
+    }
+
+    private static string? NormalizeTechnicalDiagnostic(string? technicalDiagnostic)
+    {
+        if (string.IsNullOrWhiteSpace(technicalDiagnostic))
+        {
+            return null;
+        }
+        string normalized = string.Join(
+            ' ',
+            technicalDiagnostic.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return normalized.Length <= kMaxTechnicalDiagnosticLength
+            ? normalized
+            : normalized[..kMaxTechnicalDiagnosticLength];
     }
 
     /// <summary>
