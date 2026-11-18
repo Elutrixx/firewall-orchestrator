@@ -80,7 +80,9 @@ internal static class PositioningAddressRangeNormalizer
 }
 
 /// <summary>Signals one safely categorized network-input normalization failure.</summary>
-public sealed class NetworkResolutionException(CreationRuleNetworkResolutionFailureCategory category) : Exception
+public sealed class NetworkResolutionException(
+    CreationRuleNetworkResolutionFailureCategory category,
+    Exception? innerException = null) : Exception(null, innerException)
 {
     /// <summary>Gets the safe failure category.</summary>
     public CreationRuleNetworkResolutionFailureCategory Category { get; } = category;

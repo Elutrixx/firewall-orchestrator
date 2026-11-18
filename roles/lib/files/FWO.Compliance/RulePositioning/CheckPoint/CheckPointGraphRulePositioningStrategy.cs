@@ -89,7 +89,11 @@ public sealed class CheckPointGraphRulePositioningStrategy : IRulePositioningStr
             if (executionSuccess.Value is not CheckPointPositionValue positionValue
                 || positionValue.Position.PositioningAlgorithm != algorithm)
             {
-                return Failure(RulePositioningFailureCategory.CalculationFailed);
+                return KnownFailure(
+                    "graph recipe execution result",
+                    RulePositioningFailureCategory.CalculationFailed,
+                    StrategyFailureCategory.UnexpectedPositionResult,
+                    "The positioning recipe returned an unexpected result.");
             }
 
             return new RulePositioningSuccess(positionValue.Position);
@@ -100,46 +104,107 @@ public sealed class CheckPointGraphRulePositioningStrategy : IRulePositioningStr
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            return Failure(RulePositioningFailureCategory.CalculationFailed);
+            return Failure(
+                RulePositioningFailureCategory.CalculationFailed,
+                RulePositioningFailureDetail.ForUnexpectedException(
+                    "graph strategy calculation",
+                    exception));
         }
     }
 
     /// <summary>Maps graph-reader failures to the public positioning contract.</summary>
     private static RulePositioningFailure MapGraphFailure(RulebaseGraphReadResult result)
     {
-        RulePositioningFailureCategory category = result.TryGetFailure(out RulebaseGraphReadFailureCategory failureCategory)
-            && failureCategory is RulebaseGraphReadFailureCategory.InvalidInput or RulebaseGraphReadFailureCategory.ScopeMismatch
+        if (!result.TryGetFailure(out RulebaseGraphReadFailureCategory failureCategory))
+        {
+            return Failure(RulePositioningFailureCategory.CalculationFailed);
+        }
+        RulePositioningFailureCategory category = failureCategory is
+            RulebaseGraphReadFailureCategory.InvalidInput or RulebaseGraphReadFailureCategory.ScopeMismatch
                 ? RulePositioningFailureCategory.InvalidInput
                 : RulePositioningFailureCategory.CalculationFailed;
-        return Failure(category);
+        return KnownFailure("rulebase graph", category, failureCategory, failureCategory.GetDiagnostic());
     }
 
     /// <summary>Maps graph-only recipe-selection failures to the public positioning contract.</summary>
     private static RulePositioningFailure MapSelectionFailure(CheckPointGraphRecipeSelectionResult result)
     {
-        RulePositioningFailureCategory category = result.TryGetFailure(
-            out CheckPointGraphRecipeSelectionFailureCategory failureCategory)
-            && failureCategory == CheckPointGraphRecipeSelectionFailureCategory.NoMatchingRecipe
-                ? RulePositioningFailureCategory.PositioningMethodNotImplemented
-                : RulePositioningFailureCategory.ConfigurationInvalid;
-        return Failure(category);
+        if (!result.TryGetFailure(out CheckPointGraphRecipeSelectionFailureCategory failureCategory))
+        {
+            return Failure(RulePositioningFailureCategory.CalculationFailed);
+        }
+        RulePositioningFailureCategory category = failureCategory ==
+            CheckPointGraphRecipeSelectionFailureCategory.NoMatchingRecipe
+            ? RulePositioningFailureCategory.PositioningMethodNotImplemented
+            : RulePositioningFailureCategory.ConfigurationInvalid;
+        return KnownFailure(
+            "graph recipe selection",
+            category,
+            failureCategory,
+            failureCategory.GetDiagnostic());
     }
 
     /// <summary>Maps block failures to the public positioning contract.</summary>
     private static RulePositioningFailure MapExecutionFailure(PositioningBlockResult<CheckPointBlockValue> result)
     {
-        RulePositioningFailureCategory category = result is PositioningBlockFailure<CheckPointBlockValue> failure
-            && failure.Category == PositioningBlockFailureCategory.InvalidRecipe
-                ? RulePositioningFailureCategory.ConfigurationInvalid
-                : RulePositioningFailureCategory.CalculationFailed;
-        return Failure(category);
+        if (result is not PositioningBlockFailure<CheckPointBlockValue> failure)
+        {
+            return Failure(RulePositioningFailureCategory.CalculationFailed);
+        }
+        RulePositioningFailureCategory category = failure.Category == PositioningBlockFailureCategory.InvalidRecipe
+            ? RulePositioningFailureCategory.ConfigurationInvalid
+            : RulePositioningFailureCategory.CalculationFailed;
+        if (failure.Exception != null)
+        {
+            return Failure(
+                category,
+                RulePositioningFailureDetail.ForUnexpectedException(
+                    "graph recipe execution",
+                    failure.Exception,
+                    failure.OriginatingBlockKind));
+        }
+        return KnownFailure(
+            "graph recipe execution",
+            category,
+            failure.Category,
+            failure.Diagnostic,
+            failure.OriginatingBlockKind);
     }
 
     /// <summary>Creates a safe typed failure.</summary>
     private static RulePositioningFailure Failure(RulePositioningFailureCategory category)
     {
         return new RulePositioningFailure(category);
+    }
+
+    /// <summary>Creates a failure retaining bounded technical detail.</summary>
+    private static RulePositioningFailure Failure(
+        RulePositioningFailureCategory category,
+        RulePositioningFailureDetail detail)
+    {
+        return new RulePositioningFailure(category, detail);
+    }
+
+    /// <summary>Creates a failure from one typed lower-level cause.</summary>
+    private static RulePositioningFailure KnownFailure(
+        string stage,
+        RulePositioningFailureCategory category,
+        Enum specificCategory,
+        string diagnostic,
+        string? originatingBlockKind = null)
+    {
+        RulePositioningFailureDetail detail = RulePositioningFailureDetail.ForKnownFailure(
+            stage,
+            specificCategory,
+            diagnostic,
+            originatingBlockKind);
+        return Failure(category, detail);
+    }
+
+    private enum StrategyFailureCategory
+    {
+        UnexpectedPositionResult
     }
 }

@@ -49,14 +49,24 @@ public sealed class RulePositioningFailure : RulePositioningResult
     public RulePositioningFailureCategory Category { get; }
     /// <summary>Gets the fixed safe failure diagnostic.</summary>
     public string Diagnostic { get; }
+    /// <summary>Gets optional technical detail intended for middleware diagnostics.</summary>
+    public RulePositioningFailureDetail? Detail { get; }
 
     /// <summary>
     /// Creates a failed result without accepting potentially sensitive caller content.
     /// </summary>
     public RulePositioningFailure(RulePositioningFailureCategory category)
+        : this(category, null)
+    { }
+
+    /// <summary>Creates a failed result with optional bounded technical detail.</summary>
+    public RulePositioningFailure(
+        RulePositioningFailureCategory category,
+        RulePositioningFailureDetail? detail)
     {
         Category = category;
         Diagnostic = DiagnosticFor(category);
+        Detail = detail;
     }
 
     /// <summary>

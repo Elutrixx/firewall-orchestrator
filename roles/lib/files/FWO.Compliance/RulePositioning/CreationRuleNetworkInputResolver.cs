@@ -51,12 +51,15 @@ public sealed class CreationRuleNetworkInputResolver(IFlowGroupResolver flowGrou
         }
         catch (NetworkResolutionException exception)
         {
-            return CreationRuleNetworkResolutionResult.Failure(exception.Category);
+            return exception.InnerException == null
+                ? CreationRuleNetworkResolutionResult.Failure(exception.Category)
+                : CreationRuleNetworkResolutionResult.Failure(exception.Category, exception.InnerException);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
             return CreationRuleNetworkResolutionResult.Failure(
-                CreationRuleNetworkResolutionFailureCategory.UnexpectedFailure);
+                CreationRuleNetworkResolutionFailureCategory.UnexpectedFailure,
+                exception);
         }
     }
 
@@ -149,9 +152,9 @@ public sealed class CreationRuleNetworkInputResolver(IFlowGroupResolver flowGrou
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            throw Failure(CreationRuleNetworkResolutionFailureCategory.GroupQueryFailed);
+            throw Failure(CreationRuleNetworkResolutionFailureCategory.GroupQueryFailed, exception);
         }
     }
 
@@ -472,7 +475,9 @@ public sealed class CreationRuleNetworkInputResolver(IFlowGroupResolver flowGrou
     private static WfReqElement Clone(WfReqElement element) => new(element);
 
     /// <summary>Creates an internal typed control-flow failure.</summary>
-    private static NetworkResolutionException Failure(CreationRuleNetworkResolutionFailureCategory category) => new(category);
+    private static NetworkResolutionException Failure(
+        CreationRuleNetworkResolutionFailureCategory category,
+        Exception? innerException = null) => new(category, innerException);
 
     /// <summary>Immutable state shared while resolving exact references and catalog groups.</summary>
     private sealed record ResolutionContext(

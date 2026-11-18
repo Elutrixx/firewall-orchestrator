@@ -44,9 +44,11 @@ public sealed class RulePositioningManager
                     context.EffectiveSettings.PositioningAlgorithm))
             ];
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            return Failure(RulePositioningFailureCategory.CalculationFailed);
+            return Failure(
+                RulePositioningFailureCategory.CalculationFailed,
+                RulePositioningFailureDetail.ForUnexpectedException("strategy selection", exception));
         }
 
         if (matchingStrategies.Count == 0)
@@ -70,9 +72,11 @@ public sealed class RulePositioningManager
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            return Failure(RulePositioningFailureCategory.CalculationFailed);
+            return Failure(
+                RulePositioningFailureCategory.CalculationFailed,
+                RulePositioningFailureDetail.ForUnexpectedException("strategy calculation", exception));
         }
     }
 
@@ -82,5 +86,13 @@ public sealed class RulePositioningManager
     private static RulePositioningFailure Failure(RulePositioningFailureCategory category)
     {
         return new RulePositioningFailure(category);
+    }
+
+    /// <summary>Creates a failure retaining bounded technical detail.</summary>
+    private static RulePositioningFailure Failure(
+        RulePositioningFailureCategory category,
+        RulePositioningFailureDetail detail)
+    {
+        return new RulePositioningFailure(category, detail);
     }
 }

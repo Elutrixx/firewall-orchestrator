@@ -162,6 +162,55 @@ public class RulePositioningContractsTest
     }
 
     [Test]
+    public void Failure_PreservesKnownTechnicalDetailWithoutChangingSafeDiagnostic()
+    {
+        RulePositioningFailureDetail detail = RulePositioningFailureDetail.ForKnownFailure(
+            "recipe execution",
+            TestFailureCategory.Invalid,
+            "The requested positioning scope was not found.",
+            "CheckPointSectionScope");
+
+        RulePositioningFailure failure = new(
+            RulePositioningFailureCategory.CalculationFailed,
+            detail);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(failure.Detail, Is.SameAs(detail));
+            Assert.That(detail.Stage, Is.EqualTo("recipe execution"));
+            Assert.That(detail.SpecificCategory, Is.EqualTo(nameof(TestFailureCategory.Invalid)));
+            Assert.That(detail.Diagnostic, Is.EqualTo("The requested positioning scope was not found."));
+            Assert.That(detail.OriginatingBlockKind, Is.EqualTo("CheckPointSectionScope"));
+            Assert.That(detail.Exception, Is.Null);
+            Assert.That(failure.Diagnostic, Is.EqualTo("The rule position could not be calculated."));
+        });
+    }
+
+    [Test]
+    public void UnexpectedFailureDetail_ProducesBoundedSingleLineSummary()
+    {
+        InvalidOperationException exception = new($"first line{Environment.NewLine}second line {new string('x', 1000)}");
+
+        RulePositioningFailureDetail detail = RulePositioningFailureDetail.ForUnexpectedException(
+            "strategy calculation",
+            exception);
+        string summary = detail.ToLogSummary();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(detail.Stage, Is.EqualTo("strategy calculation"));
+            Assert.That(detail.SpecificCategory, Is.EqualTo(nameof(InvalidOperationException)));
+            Assert.That(detail.Exception, Is.SameAs(exception));
+            Assert.That(summary, Does.Contain(nameof(InvalidOperationException)));
+            Assert.That(summary, Does.Not.Contain("first line"));
+            Assert.That(summary, Does.Not.Contain("second line"));
+            Assert.That(summary, Does.Not.Contain("\r"));
+            Assert.That(summary, Does.Not.Contain("\n"));
+            Assert.That(summary.Length, Is.LessThanOrEqualTo(512));
+        });
+    }
+
+    [Test]
     public void GenericResult_SuccessExposesOnlyItsValue()
     {
         object value = new();
@@ -194,6 +243,23 @@ public class RulePositioningContractsTest
             Assert.That(result.TryGetValue(out _), Is.False);
             Assert.That(result.TryGetFailure(out TestFailureCategory category), Is.True);
             Assert.That(category, Is.EqualTo(TestFailureCategory.Invalid));
+        });
+    }
+
+    [Test]
+    public void GenericResult_FailureCanRetainUnexpectedExceptionForBoundaryLogging()
+    {
+        InvalidOperationException exception = new("sensitive resolver failure");
+
+        PositioningResult<object, TestFailureCategory> result =
+            PositioningResult<object, TestFailureCategory>.Failure(
+                TestFailureCategory.Invalid,
+                exception);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.FailureCategory, Is.EqualTo(TestFailureCategory.Invalid));
+            Assert.That(result.Exception, Is.SameAs(exception));
         });
     }
 

@@ -114,6 +114,14 @@ namespace FWO.Api.Client
         public abstract Task<QueryResponseType> SendQueryAsync<QueryResponseType>(string query, object? variables = null, string? operationName = null, QueryChunkingOptions? chunkingOptions = null);
 
         /// <summary>
+        /// Suppresses client-owned error entries while a higher-level boundary aggregates one failure summary.
+        /// </summary>
+        public virtual IDisposable SuppressErrorLogging()
+        {
+            return NoOpDisposable.Instance;
+        }
+
+        /// <summary>
         /// Sends an API call and returns a non-throwing response wrapper containing data or errors.
         /// </summary>
         public abstract Task<ApiResponse<QueryResponseType>> SendQuerySafeAsync<QueryResponseType>(string query, object? variables = null, string? operationName = null);
@@ -136,6 +144,13 @@ namespace FWO.Api.Client
             Dispose(true);
             disposed = true;
             GC.SuppressFinalize(this);
+        }
+
+        private sealed class NoOpDisposable : IDisposable
+        {
+            internal static readonly NoOpDisposable Instance = new();
+
+            public void Dispose() { }
         }
     }
 }

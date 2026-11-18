@@ -16,6 +16,9 @@ public sealed class PositioningResult<TValue, TFailureCategory>
     /// <summary>Gets the failure category, or <see langword="null"/> for a success.</summary>
     public TFailureCategory? FailureCategory { get; }
 
+    /// <summary>Gets an unexpected exception retained for boundary diagnostics only.</summary>
+    public Exception? Exception { get; }
+
     /// <summary>Creates a successful result.</summary>
     private PositioningResult(TValue value)
     {
@@ -24,9 +27,10 @@ public sealed class PositioningResult<TValue, TFailureCategory>
     }
 
     /// <summary>Creates a failed result.</summary>
-    private PositioningResult(TFailureCategory failureCategory)
+    private PositioningResult(TFailureCategory failureCategory, Exception? exception)
     {
         FailureCategory = failureCategory;
+        Exception = exception;
     }
 
     /// <summary>Creates a successful result containing a non-null value.</summary>
@@ -37,7 +41,17 @@ public sealed class PositioningResult<TValue, TFailureCategory>
     }
 
     /// <summary>Creates a failed result containing only its safe domain category.</summary>
-    public static PositioningResult<TValue, TFailureCategory> Failure(TFailureCategory category) => new(category);
+    public static PositioningResult<TValue, TFailureCategory> Failure(TFailureCategory category) =>
+        new(category, null);
+
+    /// <summary>Creates a failed result retaining an unexpected exception for debug-only boundary logging.</summary>
+    public static PositioningResult<TValue, TFailureCategory> Failure(
+        TFailureCategory category,
+        Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        return new PositioningResult<TValue, TFailureCategory>(category, exception);
+    }
 
     /// <summary>Tries to get the successful value.</summary>
     public bool TryGetValue([NotNullWhen(true)] out TValue? value)

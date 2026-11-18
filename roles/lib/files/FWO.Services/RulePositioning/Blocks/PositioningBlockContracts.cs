@@ -98,6 +98,8 @@ public sealed class PositioningBlockFailure<TOutput> : PositioningBlockResult<TO
     public string OriginatingBlockKind { get; }
     /// <summary>Gets the fixed safe failure diagnostic.</summary>
     public string Diagnostic { get; }
+    /// <summary>Gets an unexpected block exception retained for debug diagnostics only.</summary>
+    public Exception? Exception { get; }
 
     /// <summary>
     /// Creates a typed failure without accepting caller or exception content.
@@ -105,6 +107,14 @@ public sealed class PositioningBlockFailure<TOutput> : PositioningBlockResult<TO
     public PositioningBlockFailure(
         PositioningBlockFailureCategory category,
         string originatingBlockKind)
+        : this(category, originatingBlockKind, null)
+    { }
+
+    /// <summary>Creates a typed failure retaining an unexpected exception for debug diagnostics.</summary>
+    public PositioningBlockFailure(
+        PositioningBlockFailureCategory category,
+        string originatingBlockKind,
+        Exception? exception)
     {
         if (string.IsNullOrWhiteSpace(originatingBlockKind))
         {
@@ -113,6 +123,7 @@ public sealed class PositioningBlockFailure<TOutput> : PositioningBlockResult<TO
         Category = category;
         OriginatingBlockKind = originatingBlockKind;
         Diagnostic = DiagnosticFor(category);
+        Exception = exception;
     }
 
     /// <summary>

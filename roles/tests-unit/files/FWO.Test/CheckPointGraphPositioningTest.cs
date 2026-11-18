@@ -128,8 +128,14 @@ internal class CheckPointGraphPositioningTest
 
         RulePositioningResult result = await strategy.CalculateAsync(Context(), CancellationToken.None);
 
-        Assert.That(((RulePositioningFailure)result).Category,
-            Is.EqualTo(RulePositioningFailureCategory.CalculationFailed));
+        RulePositioningFailure failure = (RulePositioningFailure)result;
+        Assert.Multiple(() =>
+        {
+            Assert.That(failure.Category, Is.EqualTo(RulePositioningFailureCategory.CalculationFailed));
+            Assert.That(failure.Detail, Is.Not.Null);
+            Assert.That(failure.Detail!.SpecificCategory, Is.EqualTo(nameof(PositioningBlockFailureCategory.InvalidSnapshot)));
+            Assert.That(failure.Detail.OriginatingBlockKind, Is.EqualTo(CheckPointLayerScopeBlock.kKind));
+        });
     }
 
     [Test]
@@ -180,7 +186,14 @@ internal class CheckPointGraphPositioningTest
 
         RulePositioningResult result = await strategy.CalculateAsync(Context(), CancellationToken.None);
 
-        Assert.That(((RulePositioningFailure)result).Category, Is.EqualTo(expectedCategory));
+        RulePositioningFailure failure = (RulePositioningFailure)result;
+        Assert.Multiple(() =>
+        {
+            Assert.That(failure.Category, Is.EqualTo(expectedCategory));
+            Assert.That(failure.Detail, Is.Not.Null);
+            Assert.That(failure.Detail!.SpecificCategory, Is.EqualTo(graphCategory.ToString()));
+            Assert.That(failure.Detail.Diagnostic, Is.EqualTo(graphCategory.GetDiagnostic()));
+        });
     }
 
     [TestCase(CheckPointGraphRecipeSelectionFailureCategory.NoMatchingRecipe, RulePositioningFailureCategory.PositioningMethodNotImplemented)]
@@ -225,8 +238,14 @@ internal class CheckPointGraphPositioningTest
 
         RulePositioningResult result = await strategy.CalculateAsync(Context(), CancellationToken.None);
 
-        Assert.That(((RulePositioningFailure)result).Category,
-            Is.EqualTo(RulePositioningFailureCategory.CalculationFailed));
+        RulePositioningFailure failure = (RulePositioningFailure)result;
+        Assert.Multiple(() =>
+        {
+            Assert.That(failure.Category, Is.EqualTo(RulePositioningFailureCategory.CalculationFailed));
+            Assert.That(failure.Detail, Is.Not.Null);
+            Assert.That(failure.Detail!.Stage, Is.EqualTo("graph strategy calculation"));
+            Assert.That(failure.Detail.SpecificCategory, Is.EqualTo(nameof(InvalidOperationException)));
+        });
     }
 
     private static RulePositioningContext Context()
